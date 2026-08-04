@@ -78,7 +78,21 @@ export async function sendInviteEmail(input: {
     `This message was sent from ${getMailFrom()}`,
   ].join("\n");
 
-  await sendMail({ to: input.to, subject, text });
+  const html = `
+    <div style="font-family: system-ui, sans-serif; line-height: 1.5; color: #0f172a;">
+      <p>Hi ${input.name},</p>
+      <p>You have been invited to <strong>${APP_NAME}</strong>.</p>
+      <p>
+        <a href="${loginUrl}">Sign in here</a><br/>
+        Email: <strong>${input.to}</strong><br/>
+        Temporary password: <strong>${input.tempPassword}</strong>
+      </p>
+      <p>Change your password on first login.</p>
+      <p style="color:#64748b;font-size:12px;">Sent from ${getMailFrom()}</p>
+    </div>
+  `;
+
+  await sendMail({ to: input.to, subject, text, html });
 }
 
 export async function sendPasswordResetEmail(input: {

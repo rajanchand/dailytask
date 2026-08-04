@@ -21,8 +21,9 @@ export function InviteMemberForm() {
       <CardHeader>
         <CardTitle>Invite Team Member</CardTitle>
         <CardDescription>
-          Creates an account and emails login details from noreply@zero-trust-security.org. They must
-          change their password on first login.
+          Enter name and email — the account is saved to the database and an invite with login
+          details is emailed automatically (from noreply@zero-trust-security.org). They must change
+          their password on first login.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -38,7 +39,9 @@ export function InviteMemberForm() {
           <div className="grid gap-2">
             <Label htmlFor="role">Role</Label>
             <select id="role" name="role" className="h-10 rounded-lg border border-border bg-card px-3 text-sm" defaultValue="member">
-              {Object.entries(ROLE_LABELS).map(([v, l]) => (
+              {Object.entries(ROLE_LABELS)
+                .filter(([v]) => v !== "super_admin")
+                .map(([v, l]) => (
                 <option key={v} value={v}>{l}</option>
               ))}
             </select>

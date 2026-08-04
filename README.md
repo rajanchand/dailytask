@@ -32,7 +32,9 @@ pnpm worker:dev          # reminders / overdue / daily summary
 pnpm discord:bot         # optional keyword bot (needs DISCORD_BOT_TOKEN)
 ```
 
-**Demo login:** `rajan@dailyflow.app` / `password123`
+**Super admin login:** `rajanchand@zero-trust-security.org` / `password123`
+
+Invite more people from **Team** — each invite is saved to the database and emailed login details automatically (requires SMTP in `.env`).
 
 Public registration is **off** by default (`ALLOW_PUBLIC_REGISTER=false`). Admins invite users from Team; SMTP must be configured for invite emails.
 
