@@ -60,11 +60,12 @@ export function SettingsForms({ user }: SettingsFormsProps) {
       return;
     }
     if (result?.ok) {
+      const image = avatarUrl ? avatarUrl.split("?")[0] : undefined;
       await update({
         name: result.name,
         email: result.email,
         timezone: result.timezone,
-        image: avatarUrl || undefined,
+        image,
       });
       toast.success("Profile updated");
     }

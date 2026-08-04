@@ -6,7 +6,20 @@ import { SettingsForms } from "@/components/settings/settings-forms";
 
 export default async function SettingsPage() {
   const session = await auth();
-  const [user] = await db.select().from(users).where(eq(users.id, session!.user!.id)).limit(1);
+  const [user] = await db
+    .select({
+      name: users.name,
+      email: users.email,
+      timezone: users.timezone,
+      image: users.image,
+      address: users.address,
+      phone: users.phone,
+      contactNumber: users.contactNumber,
+      notificationPrefs: users.notificationPrefs,
+    })
+    .from(users)
+    .where(eq(users.id, session!.user!.id))
+    .limit(1);
 
   if (!user) return null;
 
