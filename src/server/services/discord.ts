@@ -52,7 +52,7 @@ export async function testDiscordWebhook(webhookUrl: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      content: "✅ **Dailytask Manager connected**\nDiscord sync is working.",
+      content: "Dailytask Manager connected — Discord sync is working.",
     }),
   });
   if (!res.ok) {
@@ -70,20 +70,14 @@ export function formatDailySummaryDiscord(input: {
 }) {
   const remaining =
     input.remaining.length > 0
-      ? input.remaining.map((t) => `• ${t}`).join("\n")
-      : "• None";
+      ? input.remaining.map((t) => `- ${t}`).join("\n")
+      : "- none";
 
   return [
-    "📋 **Daily Task Summary**",
+    `Summary · ${input.userName} · ${input.date}`,
+    `done ${input.completed}  ·  active ${input.inProgress}  ·  pending ${input.pending}`,
     "",
-    `👤 ${input.userName}`,
-    `📅 ${input.date}`,
-    "",
-    `✅ Completed: ${input.completed}`,
-    `🔄 In Progress: ${input.inProgress}`,
-    `⚠️ Pending: ${input.pending}`,
-    "",
-    "Remaining:",
+    "Left",
     remaining,
   ].join("\n");
 }

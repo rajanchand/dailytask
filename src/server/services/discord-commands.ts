@@ -2,8 +2,7 @@ import { and, eq, gte, lte } from "drizzle-orm";
 import { format, subDays } from "date-fns";
 import { db } from "@/server/db";
 import { tasks, users } from "@/server/db/schema";
-import { STATUS_LABELS, PRIORITY_LABELS, todayISO } from "@/lib/utils";
-import { APP_NAME } from "@/lib/brand";
+import { todayISO } from "@/lib/utils";
 
 export type DiscordCommand =
   | "today_tasks"
@@ -98,21 +97,13 @@ export function parseDiscordCommand(raw: string): DiscordCommand {
   return null;
 }
 
-function statusIcon(status: string) {
-  if (status === "completed") return "✅";
-  if (status === "in_progress" || status === "working_on_it") return "🔄";
-  if (status === "blocked") return "🚫";
-  if (status === "review") return "👀";
-  if (status === "waiting") return "⏳";
-  return "⬜";
-}
-
-function priorityIcon(priority: string) {
-  if (priority === "critical") return "🔴";
-  if (priority === "high") return "🟥";
-  if (priority === "medium") return "🟡";
-  if (priority === "low") return "🟢";
-  return "⚪";
+function shortStatus(status: string) {
+  if (status === "completed") return "done";
+  if (status === "in_progress" || status === "working_on_it") return "active";
+  if (status === "blocked") return "blocked";
+  if (status === "review") return "review";
+  if (status === "waiting") return "waiting";
+  return "todo";
 }
 
 async function loadTasksForDate(date: string) {
@@ -135,7 +126,7 @@ async function loadTodayTasks() {
   const date = todayISO();
   return {
     date,
-    displayDate: format(new Date(), "EEEE, d MMMM yyyy"),
+    displayDate: format(new Date(), "d MMM yyyy"),
     rows: await loadTasksForDate(date),
   };
 }
@@ -156,35 +147,36 @@ function summarize(rows: Awaited<ReturnType<typeof loadTasksForDate>>) {
 
 export function formatHelpMessage() {
   return [
-    `🤖 **${APP_NAME} — Discord Commands**`,
-    "",
-    "Type any of these:",
-    "",
-    "• `today task` — today's task list",
-    "• `today total task update` — totals / progress",
-    "• `today complete task` — completed today",
-    "• `today pending` — remaining tasks",
-    "• `report` or `daily report` — full daily report",
-    "• `weekly report` — last 7 days report",
-    "• `help` — this menu",
+    "Commands",
+    "`today task` · list",
+    "`today total task update` · counts",
+    "`today complete task` · done",
+    "`today pending` · remaining",
+    "`report` · daily",
+    "`weekly report` · week",
+    "`help`",
   ].join("\n");
 }
 
 export async function buildTodayTasksMessage() {
   const { displayDate, rows } = await loadTodayTasks();
   if (rows.length === 0) {
-    return `📋 **Today's Tasks**\n📅 ${displayDate}\n\nNo tasks scheduled for today.`;
+    return `Today · ${displayDate}\nNo tasks.`;
   }
 
   const lines = rows.map((t, i) => {
-    const time = t.dueTime ? ` · due ${t.dueTime}` : "";
-    const who = t.assigneeName ? ` · ${t.assigneeName}` : "";
-    return `${i + 1}. ${statusIcon(t.status)} **${t.title}**${time}${who}\n    ${priorityIcon(t.priority)} ${PRIORITY_LABELS[t.priority] ?? t.priority} · ${STATUS_LABELS[t.status] ?? t.status} · ${t.progress ?? 0}%`;
+    const meta = [
+      shortStatus(t.status),
+      t.dueTime ? t.dueTime : null,
+      `${t.progress ?? 0}%`,
+      t.assigneeName || null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return `${i + 1}. ${t.title}  (${meta})`;
   });
 
-  return [`📋 **Today's Tasks**`, `📅 ${displayDate}`, `Total: **${rows.length}**`, "", ...lines].join(
-    "\n",
-  );
+  return [`Today · ${displayDate} · ${rows.length} tasks`, ...lines].join("\n");
 }
 
 export async function buildTodayStatsMessage() {
@@ -192,22 +184,10 @@ export async function buildTodayStatsMessage() {
   const s = summarize(rows);
 
   return [
-    "📊 **Today Total Task Update**",
-    `📅 ${displayDate}`,
-    "",
-    `📋 Total: **${s.total}**`,
-    `✅ Completed: **${s.completed}**`,
-    `🔄 In Progress: **${s.inProgress}**`,
-    `⚠️ Pending: **${s.pending}**`,
-    `🔴 Overdue: **${s.overdue}**`,
-    "",
-    `Productivity: **${s.rate}%**`,
-    s.rate > 0
-      ? `\`${"█".repeat(Math.round(s.rate / 10))}${"░".repeat(10 - Math.round(s.rate / 10))}\` ${s.rate}%`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `Today · ${displayDate}`,
+    `total ${s.total}  ·  done ${s.completed}  ·  active ${s.inProgress}  ·  pending ${s.pending}  ·  overdue ${s.overdue}`,
+    `progress ${s.rate}%`,
+  ].join("\n");
 }
 
 export async function buildTodayCompletedMessage() {
@@ -215,21 +195,11 @@ export async function buildTodayCompletedMessage() {
   const completed = rows.filter((t) => t.status === "completed");
 
   if (completed.length === 0) {
-    return `✅ **Today Completed Tasks**\n📅 ${displayDate}\n\nNo tasks completed yet today.`;
+    return `Done today · ${displayDate}\nNone yet.`;
   }
 
-  const lines = completed.map((t, i) => {
-    const who = t.assigneeName ? ` · ${t.assigneeName}` : "";
-    return `${i + 1}. ✅ **${t.title}**${who}`;
-  });
-
-  return [
-    "✅ **Today Completed Tasks**",
-    `📅 ${displayDate}`,
-    `Completed: **${completed.length}**`,
-    "",
-    ...lines,
-  ].join("\n");
+  const lines = completed.map((t, i) => `${i + 1}. ${t.title}`);
+  return [`Done today · ${displayDate} · ${completed.length}`, ...lines].join("\n");
 }
 
 export async function buildTodayPendingMessage() {
@@ -237,21 +207,13 @@ export async function buildTodayPendingMessage() {
   const pending = rows.filter((t) => t.status !== "completed" && t.status !== "cancelled");
 
   if (pending.length === 0) {
-    return `🎉 **Today Pending Tasks**\n📅 ${displayDate}\n\nAll clear — nothing pending.`;
+    return `Pending · ${displayDate}\nAll clear.`;
   }
 
-  const lines = pending.map((t, i) => {
-    const who = t.assigneeName ? ` · ${t.assigneeName}` : "";
-    return `${i + 1}. ${statusIcon(t.status)} **${t.title}** (${STATUS_LABELS[t.status] ?? t.status})${who}`;
-  });
-
-  return [
-    "⚠️ **Today Pending Tasks**",
-    `📅 ${displayDate}`,
-    `Remaining: **${pending.length}**`,
-    "",
-    ...lines,
-  ].join("\n");
+  const lines = pending.map(
+    (t, i) => `${i + 1}. ${t.title}  (${shortStatus(t.status)})`,
+  );
+  return [`Pending · ${displayDate} · ${pending.length}`, ...lines].join("\n");
 }
 
 export async function buildDailyReportMessage() {
@@ -261,32 +223,24 @@ export async function buildDailyReportMessage() {
   const completed = rows.filter((t) => t.status === "completed");
 
   return [
-    `📑 **${APP_NAME} — Daily Report**`,
-    `📅 ${displayDate}`,
+    `Daily report · ${displayDate}`,
+    `total ${s.total}  ·  done ${s.completed}  ·  active ${s.inProgress}  ·  pending ${s.pending}  ·  overdue ${s.overdue}  ·  ${s.rate}%`,
     "",
-    "━━━ Overview ━━━",
-    `📋 Total: **${s.total}**`,
-    `✅ Completed: **${s.completed}**`,
-    `🔄 In Progress: **${s.inProgress}**`,
-    `⚠️ Pending: **${s.pending}**`,
-    `🔴 Overdue: **${s.overdue}**`,
-    `📈 Completion: **${s.rate}%**`,
-    "",
-    "━━━ Completed ━━━",
+    "Done",
     completed.length
       ? completed
           .slice(0, 8)
-          .map((t) => `✅ ${t.title}`)
+          .map((t) => `- ${t.title}`)
           .join("\n")
-      : "None yet",
+      : "- none",
     "",
-    "━━━ Remaining ━━━",
+    "Left",
     remaining.length
       ? remaining
           .slice(0, 8)
-          .map((t) => `${statusIcon(t.status)} ${t.title}`)
+          .map((t) => `- ${t.title}`)
           .join("\n")
-      : "None — all done 🎉",
+      : "- none",
   ].join("\n");
 }
 
@@ -316,22 +270,14 @@ export async function buildWeeklyReportMessage() {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, v]) => {
       const rate = v.total ? Math.round((v.completed / v.total) * 100) : 0;
-      return `• ${date}: ${v.completed}/${v.total} done (${rate}%)`;
+      return `${date}  ${v.completed}/${v.total} (${rate}%)`;
     });
 
   return [
-    `📆 **${APP_NAME} — Weekly Report**`,
-    `📅 ${start} → ${end}`,
+    `Week · ${start} → ${end}`,
+    `total ${s.total}  ·  done ${s.completed}  ·  active ${s.inProgress}  ·  pending ${s.pending}  ·  overdue ${s.overdue}  ·  ${s.rate}%`,
     "",
-    `📋 Total tasks: **${s.total}**`,
-    `✅ Completed: **${s.completed}**`,
-    `🔄 In Progress: **${s.inProgress}**`,
-    `⚠️ Pending: **${s.pending}**`,
-    `🔴 Overdue: **${s.overdue}**`,
-    `📈 Completion rate: **${s.rate}%**`,
-    "",
-    "━━━ By day ━━━",
-    dayLines.length ? dayLines.join("\n") : "No tasks this week",
+    ...(dayLines.length ? dayLines : ["No tasks this week"]),
   ].join("\n");
 }
 
