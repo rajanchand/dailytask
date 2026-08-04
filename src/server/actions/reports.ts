@@ -56,8 +56,18 @@ export async function getReportsOverview() {
 
 export async function sendReportToDiscordAction(kind: ReportKind) {
   const session = await requireSession();
+
+  const { rateLimitAction } = await import("@/server/security/rate-limit");
+  const limited = await rateLimitAction("discord_report", 15, 60, session.user.id);
+  if (!limited.ok) {
+    return { ok: false as const, error: "Too many sends. Try again shortly." };
+  }
+
   const content = await buildReportByKind(kind);
-  await sendDiscordWebhook(null, "dailySummary", content);
+  const sent = await sendDiscordWebhook(null, "dailySummary", content);
+  if (!sent.ok) {
+    return { ok: false as const, error: sent.error || "Could not send report" };
+  }
 
   await logActivity({
     userId: session.user.id,
@@ -66,5 +76,5 @@ export async function sendReportToDiscordAction(kind: ReportKind) {
     details: { kind },
   });
 
-  return { ok: true };
+  return { ok: true as const };
 }

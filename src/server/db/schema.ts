@@ -53,9 +53,13 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   image: text("image"),
+  address: text("address"),
+  phone: text("phone"),
+  contactNumber: text("contact_number"),
   role: roleEnum("role").notNull().default("member"),
   timezone: text("timezone").notNull().default("UTC"),
   disabled: boolean("disabled").notNull().default(false),
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   notificationPrefs: jsonb("notification_prefs")
     .$type<{
       morningReminder: boolean;

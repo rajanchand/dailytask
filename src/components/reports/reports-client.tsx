@@ -1,8 +1,16 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { FileText, Send, CalendarRange, ListChecks, BarChart3, CheckCircle2 } from "lucide-react";
+import {
+  FileText,
+  Send,
+  CalendarRange,
+  ListChecks,
+  BarChart3,
+  CheckCircle2,
+  Download,
+} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -70,23 +78,55 @@ const reportButtons: {
 
 export function ReportsClient({ overview }: { overview: Overview }) {
   const [pending, startTransition] = useTransition();
+  const [pdfPending, setPdfPending] = useState(false);
   const { today, week } = overview;
 
   function send(kind: ReportKind, label: string) {
     startTransition(async () => {
       const result = await sendReportToDiscordAction(kind);
       if (result?.ok) toast.success(`${label} sent to Discord`);
-      else toast.error("Could not send report");
+      else toast.error(result?.error || "Could not send report");
     });
+  }
+
+  async function downloadTodayPdf() {
+    setPdfPending(true);
+    try {
+      const res = await fetch("/api/reports/today/pdf");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || "Download failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dailytask-today-${today.date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("PDF downloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setPdfPending(false);
+    }
   }
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Reports</h2>
-        <p className="text-sm text-muted-foreground">
-          View clear summaries and send them to Discord with one click.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Reports</h2>
+          <p className="text-sm text-muted-foreground">
+            View summaries, download today as PDF, or send to Discord.
+          </p>
+        </div>
+        <Button variant="outline" disabled={pdfPending} onClick={downloadTodayPdf}>
+          <Download className="h-4 w-4" />
+          {pdfPending ? "Preparing…" : "Download today PDF"}
+        </Button>
       </div>
 
       <Card>

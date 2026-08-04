@@ -16,12 +16,14 @@ declare module "next-auth" {
       image?: string | null;
       role: Role;
       timezone: string;
+      mustChangePassword: boolean;
     };
   }
 
   interface User {
     role: Role;
     timezone: string;
+    mustChangePassword: boolean;
   }
 }
 
@@ -30,8 +32,10 @@ type AuthToken = {
   role?: Role;
   timezone?: string;
   name?: string | null;
+  email?: string | null;
   picture?: string | null;
   sub?: string;
+  mustChangePassword?: boolean;
 };
 
 const credentialsSchema = z.object({
@@ -73,6 +77,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           image: user.image,
           role: user.role,
           timezone: user.timezone,
+          mustChangePassword: user.mustChangePassword,
         };
       },
     }),
@@ -84,11 +89,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.id = user.id!;
         t.role = user.role;
         t.timezone = user.timezone;
+        t.mustChangePassword = user.mustChangePassword;
+        t.name = user.name;
+        t.email = user.email;
+        t.picture = user.image;
       }
       if (trigger === "update" && session) {
         t.name = session.name ?? t.name;
+        t.email = session.email ?? t.email;
         t.picture = session.image ?? t.picture;
         t.timezone = session.timezone ?? t.timezone;
+        if (typeof session.mustChangePassword === "boolean") {
+          t.mustChangePassword = session.mustChangePassword;
+        }
       }
       return t;
     },
@@ -98,7 +111,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.id = t.id as string;
         session.user.role = t.role as Role;
         session.user.timezone = t.timezone as string;
+        if (t.email) session.user.email = t.email;
         session.user.image = t.picture;
+        session.user.mustChangePassword = Boolean(t.mustChangePassword);
       }
       return session;
     },

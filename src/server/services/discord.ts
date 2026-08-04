@@ -15,7 +15,7 @@ export async function sendDiscordWebhook(
   teamId: string | null | undefined,
   event: DiscordEvent,
   content: string,
-) {
+): Promise<{ ok: boolean; error?: string }> {
   let integration;
 
   if (teamId) {
@@ -33,17 +33,26 @@ export async function sendDiscordWebhook(
       .limit(1);
   }
 
-  if (!integration?.enabled || !integration.webhookUrl) return;
-  if (!integration.eventTypes?.[event]) return;
+  if (!integration?.enabled || !integration.webhookUrl) {
+    return { ok: false, error: "Discord webhook is not configured or disabled." };
+  }
+  if (!integration.eventTypes?.[event]) {
+    return { ok: false, error: "This Discord event type is disabled in settings." };
+  }
 
   try {
-    await fetch(integration.webhookUrl, {
+    const res = await fetch(integration.webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
+    if (!res.ok) {
+      return { ok: false, error: `Discord returned ${res.status}` };
+    }
+    return { ok: true };
   } catch (err) {
     console.error("Discord webhook failed", err);
+    return { ok: false, error: "Failed to reach Discord webhook." };
   }
 }
 

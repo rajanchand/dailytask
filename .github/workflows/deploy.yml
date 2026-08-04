@@ -1,0 +1,51 @@
+name: Deploy
+
+# Manual deploy (and optional: enable push trigger after secrets are configured).
+# Required secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY
+# Optional: VPS_PORT (default 22), VPS_APP_DIR (default /opt/dailytask)
+on:
+  workflow_dispatch:
+  # Uncomment after configuring Actions secrets + production environment:
+  # push:
+  #   branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.VPS_APP_DIR }}"
+            APP_DIR="${APP_DIR:-/opt/dailytask}"
+            mkdir -p "$APP_DIR"
+            if [ -d "$APP_DIR/.git" ]; then
+              cd "$APP_DIR"
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              echo "No git checkout at $APP_DIR — clone required once:"
+              echo "  git clone https://github.com/rajanchand/dailytask.git $APP_DIR"
+              exit 1
+            fi
+            docker compose -f docker-compose.prod.yml up -d --build
+            sleep 8
+            curl -fsS http://127.0.0.1:3000/api/health
