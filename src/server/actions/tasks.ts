@@ -1,0 +1,668 @@
+"use server";
+
+import { and, eq, gte, ilike, lte, or } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { db } from "@/server/db";
+import {
+  tasks,
+  taskTags,
+  tags,
+  users,
+  projects,
+  categories,
+  comments,
+  attachments,
+  dailySummaries,
+} from "@/server/db/schema";
+import type { TaskPriority, TaskStatus } from "@/server/db/schema";
+import { newId, todayISO, tomorrowISO, progressFromStatus } from "@/lib/utils";
+import { requireSession, requireUserPermission } from "@/server/session";
+import { createNotification, logActivity } from "@/server/services/activity";
+import { sendDiscordWebhook } from "@/server/services/discord";
+import { addDays, format, parseISO } from "date-fns";
+import { canAssignTask, canUpdateTask, canViewTask } from "@/server/task-access";
+import type { Role } from "@/server/db/schema";
+
+const taskSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+  notes: z.string().optional(),
+  date: z.string().min(1),
+  startTime: z.string().optional().nullable(),
+  dueTime: z.string().optional().nullable(),
+  priority: z.enum(["critical", "high", "medium", "low", "none"]),
+  status: z.enum([
+    "not_started",
+    "working_on_it",
+    "in_progress",
+    "blocked",
+    "waiting",
+    "review",
+    "completed",
+    "cancelled",
+  ]),
+  progress: z.coerce.number().min(0).max(100).optional(),
+  assigneeId: z.string().optional().nullable(),
+  projectId: z.string().optional().nullable(),
+  categoryId: z.string().optional().nullable(),
+  recurrence: z.enum(["none", "daily", "weekly", "monthly", "custom"]).default("none"),
+  tagNames: z.string().optional(),
+});
+
+function revalidateTaskPaths() {
+  revalidatePath("/dashboard");
+  revalidatePath("/tasks");
+  revalidatePath("/planner");
+  revalidatePath("/kanban");
+  revalidatePath("/calendar");
+  revalidatePath("/projects");
+  revalidatePath("/analytics");
+  revalidatePath("/notifications");
+}
+
+async function notifyAssignee(input: {
+  assigneeId: string;
+  actorId: string;
+  title: string;
+  date: string;
+  taskId: string;
+}) {
+  if (input.assigneeId === input.actorId && input.date !== tomorrowISO() && input.date !== todayISO()) {
+    return;
+  }
+
+  const [assignee] = await db.select().from(users).where(eq(users.id, input.assigneeId)).limit(1);
+  if (!assignee?.notificationPrefs?.taskAssigned && !assignee?.notificationPrefs?.inAppEnabled) {
+    // still notify assignment unless prefs explicitly off
+  }
+  if (assignee?.notificationPrefs?.taskAssigned === false) return;
+
+  const isTomorrow = input.date === tomorrowISO();
+  await createNotification({
+    userId: input.assigneeId,
+    type: isTomorrow ? "tomorrow_task" : "task_assigned",
+    title: isTomorrow ? "Task scheduled for tomorrow" : "Task assigned",
+    body: isTomorrow
+      ? `Tomorrow: "${input.title}" is on your plan.`
+      : `You were assigned "${input.title}" (${input.date}).`,
+    link: `/planner?date=${input.date}`,
+  });
+
+  await sendDiscordWebhook(
+    null,
+    "taskAssigned",
+    `📌 **Task assigned**\n**${input.title}**\n👤 ${assignee?.name ?? "member"}\n📅 ${input.date}`,
+  );
+}
+
+export async function createTaskAction(formData: FormData) {
+  const session = await requireUserPermission("tasks.create");
+  const parsed = taskSchema.safeParse({
+    title: formData.get("title"),
+    description: formData.get("description") || undefined,
+    notes: formData.get("notes") || undefined,
+    date: formData.get("date"),
+    startTime: formData.get("startTime") || null,
+    dueTime: formData.get("dueTime") || null,
+    priority: formData.get("priority") || "medium",
+    status: formData.get("status") || "not_started",
+    progress: formData.get("progress") || undefined,
+    assigneeId: String(formData.get("assigneeId") ?? "") || null,
+    projectId: String(formData.get("projectId") ?? "") || null,
+    categoryId: String(formData.get("categoryId") ?? "") || null,
+    recurrence: formData.get("recurrence") || "none",
+    tagNames: formData.get("tagNames") || "",
+  });
+
+  if (!parsed.success) return { error: "Invalid task data" };
+
+  const taskId = newId();
+  const dueAt =
+    parsed.data.date && parsed.data.dueTime
+      ? new Date(`${parsed.data.date}T${parsed.data.dueTime}:00`)
+      : null;
+
+  const assigneeId = parsed.data.assigneeId || session.user.id;
+  const progress =
+    parsed.data.progress ??
+    (parsed.data.status === "completed" ? 100 : progressFromStatus(parsed.data.status));
+
+  await db.insert(tasks).values({
+    id: taskId,
+    title: parsed.data.title,
+    description: parsed.data.description,
+    notes: parsed.data.notes,
+    date: parsed.data.date,
+    startTime: parsed.data.startTime,
+    dueTime: parsed.data.dueTime,
+    dueAt,
+    priority: parsed.data.priority,
+    status: parsed.data.status,
+    progress,
+    assigneeId,
+    createdById: session.user.id,
+    projectId: parsed.data.projectId,
+    categoryId: parsed.data.categoryId,
+    recurrence: parsed.data.recurrence,
+    completedAt: parsed.data.status === "completed" ? new Date() : null,
+  });
+
+  const tagNames = (parsed.data.tagNames || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  for (const name of tagNames) {
+    let [tag] = await db.select().from(tags).where(eq(tags.name, name)).limit(1);
+    if (!tag) {
+      const tagId = newId();
+      await db.insert(tags).values({ id: tagId, name });
+      tag = { id: tagId, name, color: "#6366f1", teamId: null };
+    }
+    await db.insert(taskTags).values({ id: newId(), taskId, tagId: tag.id });
+  }
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.created",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { title: parsed.data.title, assigneeId },
+  });
+
+  await notifyAssignee({
+    assigneeId,
+    actorId: session.user.id,
+    title: parsed.data.title,
+    date: parsed.data.date,
+    taskId,
+  });
+
+  await sendDiscordWebhook(
+    null,
+    "taskCreated",
+    `🆕 **New task**\n${parsed.data.title}\n📅 ${parsed.data.date}`,
+  );
+
+  revalidateTaskPaths();
+  return { ok: true, id: taskId };
+}
+
+export async function updateTaskAction(taskId: string, formData: FormData) {
+  const session = await requireSession();
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Task not found" };
+
+  if (!canUpdateTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  const parsed = taskSchema.partial({ title: true }).safeParse({
+    title: formData.get("title") || existing.title,
+    description: formData.get("description") ?? existing.description,
+    notes: formData.get("notes") ?? existing.notes,
+    date: formData.get("date") || existing.date,
+    startTime: formData.get("startTime") ?? existing.startTime,
+    dueTime: formData.get("dueTime") ?? existing.dueTime,
+    priority: formData.get("priority") || existing.priority,
+    status: formData.get("status") || existing.status,
+    progress: formData.get("progress") ?? existing.progress,
+    assigneeId: formData.get("assigneeId") ?? existing.assigneeId,
+    projectId: formData.get("projectId") ?? existing.projectId,
+    categoryId: formData.get("categoryId") ?? existing.categoryId,
+    recurrence: formData.get("recurrence") || existing.recurrence,
+  });
+
+  if (!parsed.success) return { error: "Invalid task data" };
+
+  const data = parsed.data;
+  const dueAt =
+    data.date && data.dueTime ? new Date(`${data.date}T${data.dueTime}:00`) : existing.dueAt;
+
+  let nextAssignee = existing.assigneeId;
+  if (data.assigneeId !== undefined && data.assigneeId !== existing.assigneeId) {
+    if (!canAssignTask(session.user.role as Role, session.user.id, existing)) {
+      return { error: "You cannot reassign this task" };
+    }
+    nextAssignee = data.assigneeId;
+  }
+
+  const progress =
+    data.progress ??
+    (data.status === "completed" ? 100 : existing.progress);
+
+  await db
+    .update(tasks)
+    .set({
+      title: data.title ?? existing.title,
+      description: data.description,
+      notes: data.notes,
+      date: data.date ?? existing.date,
+      startTime: data.startTime,
+      dueTime: data.dueTime,
+      dueAt,
+      priority: (data.priority as TaskPriority) ?? existing.priority,
+      status: (data.status as TaskStatus) ?? existing.status,
+      progress: typeof progress === "number" ? progress : existing.progress,
+      assigneeId: nextAssignee,
+      projectId: data.projectId,
+      categoryId: data.categoryId,
+      recurrence: data.recurrence ?? existing.recurrence,
+      completedAt:
+        data.status === "completed"
+          ? existing.completedAt ?? new Date()
+          : data.status
+            ? null
+            : existing.completedAt,
+      isOverdue: false,
+      updatedAt: new Date(),
+    })
+    .where(eq(tasks.id, taskId));
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.updated",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { title: data.title },
+  });
+
+  if (nextAssignee && nextAssignee !== existing.assigneeId) {
+    await notifyAssignee({
+      assigneeId: nextAssignee,
+      actorId: session.user.id,
+      title: data.title ?? existing.title,
+      date: data.date ?? existing.date,
+      taskId,
+    });
+  }
+
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function updateTaskStatusAction(taskId: string, status: TaskStatus) {
+  const session = await requireSession();
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+
+  if (!canUpdateTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  const progress = status === "completed" ? 100 : Math.max(existing.progress, progressFromStatus(status));
+
+  await db
+    .update(tasks)
+    .set({
+      status,
+      progress,
+      completedAt: status === "completed" ? new Date() : null,
+      isOverdue: status === "completed" ? false : existing.isOverdue,
+      updatedAt: new Date(),
+    })
+    .where(eq(tasks.id, taskId));
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.status_changed",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { from: existing.status, to: status, title: existing.title },
+  });
+
+  if (status === "completed") {
+    await createNotification({
+      userId: session.user.id,
+      type: "task_completed",
+      title: "Task completed",
+      body: `✅ Task "${existing.title}" completed successfully.`,
+      link: "/planner",
+    });
+    await sendDiscordWebhook(
+      existing.teamId,
+      "taskCompleted",
+      `✅ **Task completed**\n${existing.title}`,
+    );
+  } else {
+    await sendDiscordWebhook(
+      existing.teamId,
+      "statusChanged",
+      `🔄 **Status changed**\n${existing.title}: ${existing.status} → ${status}`,
+    );
+  }
+
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function updateTaskProgressAction(taskId: string, progress: number) {
+  const session = await requireSession();
+  const value = Math.max(0, Math.min(100, Math.round(progress)));
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+
+  if (!canUpdateTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  let status = existing.status;
+  if (value >= 100) status = "completed";
+  else if (value >= 85 && existing.status !== "blocked") status = "review";
+  else if (value >= 50 && ["not_started", "working_on_it"].includes(existing.status)) {
+    status = "in_progress";
+  } else if (value > 0 && existing.status === "not_started") {
+    status = "working_on_it";
+  } else if (value < 100 && existing.status === "completed") {
+    status = "in_progress";
+  }
+
+  await db
+    .update(tasks)
+    .set({
+      progress: value,
+      status,
+      completedAt: value >= 100 ? new Date() : null,
+      isOverdue: value >= 100 ? false : existing.isOverdue,
+      updatedAt: new Date(),
+    })
+    .where(eq(tasks.id, taskId));
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.progress_updated",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { progress: value, status, title: existing.title },
+  });
+
+  revalidateTaskPaths();
+  return { ok: true, progress: value, status };
+}
+
+export async function assignTaskAction(taskId: string, assigneeId: string | null) {
+  const session = await requireSession();
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+
+  if (!canAssignTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  await db
+    .update(tasks)
+    .set({ assigneeId, updatedAt: new Date() })
+    .where(eq(tasks.id, taskId));
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.assigned",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { assigneeId, title: existing.title },
+  });
+
+  if (assigneeId) {
+    await notifyAssignee({
+      assigneeId,
+      actorId: session.user.id,
+      title: existing.title,
+      date: existing.date,
+      taskId,
+    });
+  }
+
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function rescheduleTaskAction(taskId: string, date: string, dueTime?: string | null) {
+  const session = await requireSession();
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+
+  if (!canUpdateTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  const dueAt = dueTime ? new Date(`${date}T${dueTime}:00`) : existing.dueAt;
+  await db
+    .update(tasks)
+    .set({
+      date,
+      dueTime: dueTime ?? existing.dueTime,
+      dueAt,
+      isOverdue: false,
+      updatedAt: new Date(),
+    })
+    .where(eq(tasks.id, taskId));
+
+  await logActivity({
+    userId: session.user.id,
+    action: "task.rescheduled",
+    entityType: "task",
+    entityId: taskId,
+    taskId,
+    details: { date, dueTime, title: existing.title },
+  });
+
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function deleteTaskAction(taskId: string) {
+  const session = await requireUserPermission("tasks.manage_team");
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+
+  await db.delete(tasks).where(eq(tasks.id, taskId));
+  await logActivity({
+    userId: session.user.id,
+    action: "task.deleted",
+    entityType: "task",
+    entityId: taskId,
+    details: { title: existing.title },
+  });
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function getTasks(filters?: {
+  date?: string;
+  q?: string;
+  status?: string;
+  priority?: string;
+  assigneeId?: string;
+  projectId?: string;
+  overdue?: boolean;
+  assignedToMe?: boolean;
+  from?: string;
+  to?: string;
+}) {
+  const session = await requireSession();
+  const conditions = [];
+
+  if (filters?.date) conditions.push(eq(tasks.date, filters.date));
+  if (filters?.from) conditions.push(gte(tasks.date, filters.from));
+  if (filters?.to) conditions.push(lte(tasks.date, filters.to));
+  if (filters?.status) conditions.push(eq(tasks.status, filters.status as TaskStatus));
+  if (filters?.priority) conditions.push(eq(tasks.priority, filters.priority as TaskPriority));
+  if (filters?.projectId) conditions.push(eq(tasks.projectId, filters.projectId));
+  if (filters?.overdue) conditions.push(eq(tasks.isOverdue, true));
+  if (filters?.assignedToMe || filters?.assigneeId === "me") {
+    conditions.push(eq(tasks.assigneeId, session.user.id));
+  } else if (filters?.assigneeId) {
+    conditions.push(eq(tasks.assigneeId, filters.assigneeId));
+  }
+  if (filters?.q) {
+    conditions.push(
+      or(ilike(tasks.title, `%${filters.q}%`), ilike(tasks.description, `%${filters.q}%`))!,
+    );
+  }
+
+  const rows = await db
+    .select({
+      task: tasks,
+      assigneeName: users.name,
+      projectName: projects.name,
+      categoryName: categories.name,
+    })
+    .from(tasks)
+    .leftJoin(users, eq(tasks.assigneeId, users.id))
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .leftJoin(categories, eq(tasks.categoryId, categories.id))
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(tasks.sortOrder, tasks.createdAt);
+
+  return rows.map((r) => ({
+    ...r.task,
+    assigneeName: r.assigneeName,
+    projectName: r.projectName,
+    categoryName: r.categoryName,
+  }));
+}
+
+export async function getDashboardStats(date = todayISO()) {
+  const session = await requireSession();
+  const dayTasks = await getTasks({ date, assignedToMe: true });
+  const overdueTasks = await getTasks({ overdue: true, assignedToMe: true });
+
+  const total = dayTasks.length;
+  const completed = dayTasks.filter((t) => t.status === "completed").length;
+  const inProgress = dayTasks.filter((t) =>
+    ["in_progress", "working_on_it", "review"].includes(t.status),
+  ).length;
+  const pending = dayTasks.filter((t) =>
+    ["not_started", "waiting", "blocked"].includes(t.status),
+  ).length;
+  const overdue = overdueTasks.filter((t) => t.status !== "completed").length;
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+
+  return {
+    user: session.user,
+    date,
+    total,
+    completed,
+    inProgress,
+    pending,
+    overdue,
+    progress,
+    tasks: dayTasks,
+  };
+}
+
+export async function moveRemainingToTomorrowAction(date?: string) {
+  const session = await requireSession();
+  const d = date ?? todayISO();
+  const dayTasks = await getTasks({ date: d, assignedToMe: true });
+  const remaining = dayTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+  const tomorrow = format(addDays(parseISO(d), 1), "yyyy-MM-dd");
+
+  for (const task of remaining) {
+    await db
+      .update(tasks)
+      .set({ date: tomorrow, isOverdue: false, updatedAt: new Date() })
+      .where(eq(tasks.id, task.id));
+  }
+
+  await logActivity({
+    userId: session.user.id,
+    action: "tasks.moved_to_tomorrow",
+    entityType: "daily_summary",
+    details: { count: remaining.length, from: d, to: tomorrow },
+  });
+
+  revalidateTaskPaths();
+  return { ok: true, count: remaining.length };
+}
+
+export async function completeRemainingAction(date?: string) {
+  await requireSession();
+  const d = date ?? todayISO();
+  const dayTasks = await getTasks({ date: d, assignedToMe: true });
+  const remaining = dayTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+  for (const task of remaining) {
+    await updateTaskStatusAction(task.id, "completed");
+  }
+  revalidateTaskPaths();
+  return { ok: true };
+}
+
+export async function dismissDailySummaryAction(date?: string) {
+  const session = await requireSession();
+  const d = date ?? todayISO();
+  await db
+    .insert(dailySummaries)
+    .values({
+      id: newId(),
+      userId: session.user.id,
+      date: d,
+      dismissed: true,
+    })
+    .onConflictDoUpdate({
+      target: [dailySummaries.userId, dailySummaries.date],
+      set: { dismissed: true },
+    });
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function getTaskFormOptions() {
+  await requireSession();
+  const [allUsers, allProjects, allCategories, allTags] = await Promise.all([
+    db.select({ id: users.id, name: users.name, email: users.email }).from(users),
+    db.select().from(projects).where(eq(projects.archived, false)),
+    db.select().from(categories),
+    db.select().from(tags),
+  ]);
+  return { users: allUsers, projects: allProjects, categories: allCategories, tags: allTags };
+}
+
+export async function addCommentAction(taskId: string, body: string) {
+  const session = await requireSession();
+  if (!body.trim()) return { error: "Empty comment" };
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+  if (!canViewTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+  await db.insert(comments).values({
+    id: newId(),
+    taskId,
+    authorId: session.user.id,
+    body: body.trim(),
+  });
+  revalidatePath("/tasks");
+  return { ok: true };
+}
+
+export async function addAttachmentMetaAction(input: {
+  taskId: string;
+  fileName: string;
+  fileUrl: string;
+  mimeType?: string;
+  sizeBytes?: number;
+}) {
+  const session = await requireSession();
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
+  if (!existing) return { error: "Not found" };
+  if (!canUpdateTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+  await db.insert(attachments).values({
+    id: newId(),
+    taskId: input.taskId,
+    uploadedById: session.user.id,
+    fileName: input.fileName,
+    fileUrl: input.fileUrl,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+  });
+  revalidatePath("/tasks");
+  return { ok: true };
+}
