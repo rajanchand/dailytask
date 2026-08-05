@@ -24,6 +24,7 @@ import { sendDiscordWebhook } from "@/server/services/discord";
 import { addDays, format, parseISO } from "date-fns";
 import { canAssignTask, canDeleteTask, canUpdateTask, canViewTask } from "@/server/task-access";
 import type { Role } from "@/server/db/schema";
+import { rateLimitAction } from "@/server/security/rate-limit";
 
 const taskSchema = z.object({
   title: z.string().min(1),
@@ -465,7 +466,17 @@ export async function rescheduleTaskAction(taskId: string, date: string, dueTime
 
 export async function deleteTaskAction(taskId: string) {
   const session = await requireSession();
-  const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  const limited = await rateLimitAction("task-delete", 20, 60 * 15, session.user.id);
+  if (!limited.ok) {
+    return { error: "Too many delete attempts. Try again later." };
+  }
+
+  const parsedId = z.string().min(1).max(64).safeParse(taskId);
+  if (!parsedId.success) {
+    return { error: "Invalid task" };
+  }
+
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, parsedId.data)).limit(1);
   if (!existing) return { error: "Not found" };
 
   if (!canDeleteTask(session.user.role as Role, session.user.id, existing)) {
@@ -473,12 +484,12 @@ export async function deleteTaskAction(taskId: string) {
   }
 
   // Hard delete — comments, attachments, and task_tags cascade via FK
-  await db.delete(tasks).where(eq(tasks.id, taskId));
+  await db.delete(tasks).where(eq(tasks.id, parsedId.data));
   await logActivity({
     userId: session.user.id,
     action: "task.deleted",
     entityType: "task",
-    entityId: taskId,
+    entityId: parsedId.data,
     taskId: null,
     details: { title: existing.title },
   });

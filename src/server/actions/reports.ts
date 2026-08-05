@@ -58,7 +58,7 @@ export async function sendReportToDiscordAction(kind: ReportKind) {
   const session = await requireSession();
 
   const { rateLimitAction } = await import("@/server/security/rate-limit");
-  const limited = await rateLimitAction("discord_report", 15, 60, session.user.id);
+  const limited = await rateLimitAction("discord_report", 10, 60, session.user.id);
   if (!limited.ok) {
     return { ok: false as const, error: "Too many sends. Try again shortly." };
   }

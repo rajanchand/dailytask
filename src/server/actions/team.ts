@@ -9,7 +9,13 @@ export async function getTeamMembers() {
   await requireSession();
   const members = await db
     .select({
-      user: users,
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      image: users.image,
+      role: users.role,
+      disabled: users.disabled,
+      timezone: users.timezone,
       teamRole: teamMembers.role,
       joinedAt: teamMembers.joinedAt,
     })
@@ -26,11 +32,9 @@ export async function getTeamMembers() {
           overdue: sql<number>`count(*) filter (where ${tasks.isOverdue} = true)`,
         })
         .from(tasks)
-        .where(eq(tasks.assigneeId, m.user.id));
+        .where(eq(tasks.assigneeId, m.id));
       return {
-        ...m.user,
-        teamRole: m.teamRole,
-        joinedAt: m.joinedAt,
+        ...m,
         taskStats: {
           total: Number(stats?.total ?? 0),
           completed: Number(stats?.completed ?? 0),

@@ -18,6 +18,7 @@ const protectedPrefixes = [
   "/discord",
   "/settings",
   "/activity",
+  "/system-health",
 ];
 
 export default auth((req) => {

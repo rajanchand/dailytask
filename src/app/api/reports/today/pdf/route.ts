@@ -11,7 +11,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limited = await rateLimitAction("pdf_today", 20, 60, session.user.id);
+  const limited = await rateLimitAction("pdf_today", 15, 60, session.user.id);
   if (!limited.ok) {
     return NextResponse.json(
       { error: "Too many downloads. Try again shortly." },

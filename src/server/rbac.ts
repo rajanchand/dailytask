@@ -13,7 +13,8 @@ export type Permission =
   | "tasks.view"
   | "projects.manage"
   | "analytics.view"
-  | "audit.view";
+  | "audit.view"
+  | "system.health";
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   super_admin: [
@@ -30,6 +31,7 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "projects.manage",
     "analytics.view",
     "audit.view",
+    "system.health",
   ],
   admin: [
     "users.manage",
@@ -71,6 +73,10 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
 
 export function hasPermission(role: Role, permission: Permission) {
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
+}
+
+export function isSuperAdmin(role: Role | string | undefined | null) {
+  return role === "super_admin";
 }
 
 export function requirePermission(role: Role, permission: Permission) {

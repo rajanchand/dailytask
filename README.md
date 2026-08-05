@@ -122,11 +122,49 @@ server {
 }
 ```
 
-Obtain certs with Certbot, then reload Nginx. With `AUTH_URL=https://...`, the app enables HSTS.
+Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other security headers from `next.config.ts`.
 
 ### 4. Health check
 
-`GET /api/health` → `{ "status": "ok" }`
+`GET /api/health` → `{ "status": "ok", "app": "Dailytask Manager", "timestamp": "..." }`
+
+Super Admin System Health UI: `/system-health` (role `super_admin` only). JSON: `GET /api/admin/system-health` (session + super_admin).
+
+### 5. Production DB inspection (Docker Postgres)
+
+On the VPS as root (app at `/opt/dailytask`):
+
+```bash
+cd /opt/dailytask
+docker compose -f docker-compose.prod.yml exec postgres psql -U dailyflow -d dailyflow
+```
+
+Useful SQL inside `psql`:
+
+```sql
+\dt
+SELECT id, name, email, role, disabled, created_at FROM users;
+SELECT id, name FROM teams;
+SELECT id, title, status, date, assignee_id FROM tasks ORDER BY created_at DESC LIMIT 50;
+```
+
+Host / container checks:
+
+```bash
+# Container resource usage
+docker stats --no-stream
+
+# App health (local)
+curl -fsS http://127.0.0.1:3000/api/health
+
+# Public health
+curl -fsS https://dailytask.zero-trust-security.org/api/health
+
+# Nginx + TLS cert status
+systemctl status nginx --no-pager
+nginx -t
+certbot certificates
+```
 
 ## CI / CD (GitHub Actions)
 
@@ -193,4 +231,7 @@ pm2 save
 - Use a strong unique `AUTH_SECRET` in production
 - Keep `ALLOW_PUBLIC_REGISTER=false` unless you intentionally want open signup
 - Configure SMTP before inviting users (invites roll back if email fails)
-- Rate limits (login/register/forgot/invite/profile/Discord/PDF) use Redis when `REDIS_URL` is set
+- Rate limits (login/register/forgot/invite/profile/change-password/Discord/PDF/avatar/task-delete) use Redis when `REDIS_URL` is set
+- Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
+- User queries never return `passwordHash` to the client (team list, settings, system health)
+- System Health (`/system-health`) is `super_admin` only and never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`

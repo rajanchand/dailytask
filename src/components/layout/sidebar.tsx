@@ -19,12 +19,13 @@ import {
   CalendarDays,
   FileText,
   X,
+  HeartPulse,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { APP_NAME, APP_SHORT_NAME } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { hasPermission, type Permission } from "@/server/rbac";
+import { hasPermission, isSuperAdmin, type Permission } from "@/server/rbac";
 import type { Role } from "@/server/db/schema";
 
 type NavItem = {
@@ -32,6 +33,7 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   permission?: Permission;
+  superAdminOnly?: boolean;
 };
 
 const primaryNav: NavItem[] = [
@@ -50,6 +52,13 @@ const secondaryNav: NavItem[] = [
   { href: "/notifications", label: "Alerts", icon: Bell },
   { href: "/discord", label: "Discord", icon: MessageSquare, permission: "discord.manage" },
   { href: "/activity", label: "Activity", icon: Activity, permission: "audit.view" },
+  {
+    href: "/system-health",
+    label: "System Health",
+    icon: HeartPulse,
+    permission: "system.health",
+    superAdminOnly: true,
+  },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -58,9 +67,11 @@ export function Sidebar({ role }: { role: Role }) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
-  const manageItems = secondaryNav.filter(
-    (item) => !item.permission || hasPermission(role, item.permission),
-  );
+  const manageItems = secondaryNav.filter((item) => {
+    if (item.superAdminOnly && !isSuperAdmin(role)) return false;
+    if (item.permission && !hasPermission(role, item.permission)) return false;
+    return true;
+  });
 
   function NavLink({ href, label, icon: Icon }: NavItem) {
     const active = pathname === href || pathname.startsWith(`${href}/`);

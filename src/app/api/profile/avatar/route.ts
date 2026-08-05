@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limited = await rateLimitAction("avatar-upload", 10, 60 * 15, session.user.id);
+  const limited = await rateLimitAction("avatar-upload", 8, 60 * 15, session.user.id);
   if (!limited.ok) {
     return NextResponse.json(
       { error: "Too many uploads. Try again later." },

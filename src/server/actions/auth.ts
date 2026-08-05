@@ -77,7 +77,7 @@ export async function registerAction(formData: FormData) {
     return { error: "Public registration is disabled. Ask an admin to invite you." };
   }
 
-  const limited = await rateLimitAction("register", 5, 60 * 15);
+  const limited = await rateLimitAction("register", 3, 60 * 15);
   if (!limited.ok) return { error: "Too many attempts. Try again later." };
 
   const parsed = registerSchema.safeParse({
@@ -123,7 +123,7 @@ export async function registerAction(formData: FormData) {
 
 export async function loginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").toLowerCase().trim();
-  const limited = await rateLimitAction("login", 10, 60 * 15, email || "anon");
+  const limited = await rateLimitAction("login", 8, 60 * 15, email || "anon");
   if (!limited.ok) return { error: "Too many login attempts. Try again later." };
 
   try {
@@ -146,7 +146,7 @@ export async function logoutAction() {
 
 export async function forgotPasswordAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").toLowerCase().trim();
-  const limited = await rateLimitAction("forgot", 5, 60 * 15, email || "anon");
+  const limited = await rateLimitAction("forgot", 3, 60 * 15, email || "anon");
   if (!limited.ok) {
     return { error: "Too many attempts. Try again later." };
   }
@@ -157,11 +157,11 @@ export async function forgotPasswordAction(formData: FormData) {
 
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (!user) {
-    return { error: "No account found with that email" };
+    return { error: "No user details found" };
   }
 
   if (user.disabled) {
-    return { error: "No account found with that email" };
+    return { error: "No user details found" };
   }
 
   const token = randomBytes(32).toString("hex");
@@ -392,7 +392,7 @@ export async function getCurrentUser() {
 export async function inviteMemberAction(formData: FormData) {
   await requireUserPermission("users.manage");
 
-  const limited = await rateLimitAction("invite", 10, 60 * 15);
+  const limited = await rateLimitAction("invite", 8, 60 * 15);
   if (!limited.ok) return { error: "Too many invites. Try again later." };
 
   const parsed = inviteSchema.safeParse({
