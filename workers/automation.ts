@@ -13,16 +13,54 @@ const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
 const QUEUE_NAME = "dailyflow-automation";
+const MORNING_REMINDER_LOCAL_HOUR = 8;
+
+/** Local wall-clock hour (0–23) in the given IANA timezone. Falls back to UTC on invalid zones. */
+function localHourInTimezone(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timeZone || "UTC",
+      hour: "numeric",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    return Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  } catch {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      hour: "numeric",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    return Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  }
+}
+
+/** Calendar date YYYY-MM-DD in the user's timezone (en-CA → ISO-like). */
+function todayISOInTimezone(timeZone: string, date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timeZone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    return todayISO(date);
+  }
+}
 
 async function morningReminderJob() {
-  console.log("[worker] Running morning reminder...");
-  const today = todayISO();
+  console.log("[worker] Running morning reminder (local hour filter)...");
+  const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
   for (const user of allUsers) {
     if (user.notificationPrefs?.morningReminder === false) continue;
     if (user.notificationPrefs?.inAppEnabled === false) continue;
 
+    const tz = user.timezone?.trim() || "UTC";
+    if (localHourInTimezone(now, tz) !== MORNING_REMINDER_LOCAL_HOUR) continue;
+
+    const today = todayISOInTimezone(tz, now);
     const dayTasks = await db
       .select()
       .from(tasks)
@@ -274,8 +312,9 @@ const jobHandlers: Record<string, () => Promise<void>> = {
 };
 
 async function setupRepeatableJobs(queue: Queue) {
+  // Morning reminder: hourly; job sends only when users.timezone local hour is 08:00.
   const schedulers = [
-    { id: "morning-reminder", pattern: "0 8 * * *" },
+    { id: "morning-reminder", pattern: "0 * * * *" },
     { id: "tomorrow-preview", pattern: "0 20 * * *" },
     { id: "deadline-check", pattern: "*/15 * * * *" },
     { id: "overdue-mark", pattern: "0 * * * *" },
