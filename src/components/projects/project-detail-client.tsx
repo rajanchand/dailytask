@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createTaskAction } from "@/server/actions/tasks";
-import { canDeleteTask } from "@/server/task-access";
+import { canDeleteTask, canUpdateTask } from "@/server/task-access";
 import { todayISO } from "@/lib/utils";
 import type { Role } from "@/server/db/schema";
 
@@ -19,6 +19,7 @@ type Task = {
   id: string;
   title: string;
   description?: string | null;
+  notes?: string | null;
   date: string;
   startTime?: string | null;
   dueTime?: string | null;
@@ -28,10 +29,12 @@ type Task = {
   isOverdue?: boolean;
   assigneeId?: string | null;
   createdById: string;
+  projectId?: string | null;
+  categoryId?: string | null;
   assigneeName?: string | null;
   projectName?: string | null;
-  recurrence?: string;
-  dailyNotify?: boolean;
+  recurrence?: string | null;
+  dailyNotify?: boolean | null;
 };
 
 type Props = {
@@ -154,6 +157,9 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
               )}
               <TaskCard
                 task={task}
+                options={options}
+                lockProjectId={project.id}
+                canEdit={canUpdateTask(access.role, access.userId, task)}
                 canDelete={canDeleteTask(access.role, access.userId, task)}
               />
             </div>

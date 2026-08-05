@@ -1,33 +1,44 @@
+"use client";
+
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/tasks/status-badge";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
+import { EditTaskButton, type EditableTask } from "@/components/tasks/edit-task-button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Clock, User } from "lucide-react";
 
+type FormOptions = {
+  users: { id: string; name: string; email: string }[];
+  projects: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
+};
+
 type TaskCardProps = {
-  task: {
-    id: string;
-    title: string;
-    description?: string | null;
-    date: string;
-    startTime?: string | null;
-    dueTime?: string | null;
-    status: string;
-    priority: string;
-    progress?: number | null;
+  task: EditableTask & {
     isOverdue?: boolean;
     assigneeName?: string | null;
     projectName?: string | null;
   };
   href?: string;
+  canEdit?: boolean;
   canDelete?: boolean;
+  options?: FormOptions;
+  lockProjectId?: string;
   className?: string;
 };
 
-export function TaskCard({ task, href, canDelete, className }: TaskCardProps) {
+export function TaskCard({
+  task,
+  href,
+  canEdit,
+  canDelete,
+  options,
+  lockProjectId,
+  className,
+}: TaskCardProps) {
   const details = (
     <>
       {task.description && (
@@ -81,8 +92,16 @@ export function TaskCard({ task, href, canDelete, className }: TaskCardProps) {
           ) : (
             <h3 className="min-w-0 flex-1 font-medium leading-snug">{task.title}</h3>
           )}
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-0.5">
             <StatusBadge status={task.status} />
+            {canEdit && options && (
+              <EditTaskButton
+                task={task}
+                options={options}
+                canDelete={canDelete}
+                lockProjectId={lockProjectId}
+              />
+            )}
             {canDelete && (
               <DeleteTaskButton taskId={task.id} taskTitle={task.title} />
             )}

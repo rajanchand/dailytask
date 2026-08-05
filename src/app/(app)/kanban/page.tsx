@@ -21,6 +21,11 @@ export default async function KanbanPage() {
       <KanbanBoard
         initialTasks={tasks}
         users={options.users}
+        options={{
+          users: options.users,
+          projects: options.projects.map((p) => ({ id: p.id, name: p.name })),
+          categories: options.categories.map((c) => ({ id: c.id, name: c.name })),
+        }}
         access={{
           userId: session.user.id,
           role: session.user.role as Role,
