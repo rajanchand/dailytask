@@ -36,6 +36,7 @@ type Task = {
   projectName?: string | null;
   recurrence?: string | null;
   dailyNotify?: boolean | null;
+  sortOrder?: number;
 };
 
 type Props = {
@@ -78,7 +79,7 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return tasks
+    return [...tasks]
       .filter((t) => {
         if (priorityFilter && t.priority !== priorityFilter) return false;
         if (!q) return true;
@@ -89,10 +90,11 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
         );
       })
       .sort((a, b) => {
-        const bySort = (a as Task & { sortOrder?: number }).sortOrder;
+        const as = (a as { sortOrder?: number }).sortOrder ?? 0;
+        const bs = (b as { sortOrder?: number }).sortOrder ?? 0;
+        if (as !== bs) return as - bs;
         const ao = priorityOrder[a.priority] ?? 9;
         const bo = priorityOrder[b.priority] ?? 9;
-        if (typeof bySort === "number") return 0;
         if (ao !== bo) return ao - bo;
         return a.title.localeCompare(b.title);
       });
