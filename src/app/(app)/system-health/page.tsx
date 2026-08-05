@@ -291,7 +291,8 @@ export default async function SystemHealthPage() {
         <CardHeader>
           <CardTitle>Login sessions</CardTitle>
           <CardDescription>
-            IP, browser, login/logout times, and status (captured on sign-in / sign-out)
+            IP, OS, browser, country/ISP, login/logout, last seen (captured on sign-in / activity /
+            sign-out)
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -300,11 +301,11 @@ export default async function SystemHealthPage() {
               <thead>
                 <tr className="border-b border-border bg-muted/50">
                   <th className="px-4 py-3 text-left font-medium">User</th>
-                  <th className="px-4 py-3 text-left font-medium">IP</th>
-                  <th className="px-4 py-3 text-left font-medium">Browser</th>
-                  <th className="px-4 py-3 text-left font-medium">Device</th>
+                  <th className="px-4 py-3 text-left font-medium">IP / ISP</th>
+                  <th className="px-4 py-3 text-left font-medium">Browser / OS</th>
+                  <th className="px-4 py-3 text-left font-medium">Country</th>
                   <th className="px-4 py-3 text-left font-medium">Login</th>
-                  <th className="px-4 py-3 text-left font-medium">Last logout</th>
+                  <th className="px-4 py-3 text-left font-medium">Last seen</th>
                   <th className="px-4 py-3 text-left font-medium">Status</th>
                 </tr>
               </thead>
@@ -322,24 +323,33 @@ export default async function SystemHealthPage() {
                       <div className="font-medium">{row.userName ?? "Unknown"}</div>
                       <div className="text-xs text-muted-foreground">{row.userEmail ?? "—"}</div>
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                      {row.ipAddress ?? "—"}
+                    <td className="px-4 py-3 font-mono text-xs">
+                      <div>{row.ipAddress ?? "—"}</div>
+                      {row.isp ? (
+                        <div className="max-w-[12rem] truncate text-muted-foreground" title={row.isp}>
+                          {row.isp}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <div>{row.browser ?? "—"}</div>
+                      <div>
+                        {row.browser ?? "—"}
+                        {row.os ? ` · ${row.os}` : ""}
+                      </div>
                       <div
                         className="max-w-[14rem] truncate text-xs text-muted-foreground"
                         title={row.userAgent ?? undefined}
                       >
-                        {row.userAgent ?? ""}
+                        {row.device ?? ""}
+                        {row.userAgent ? ` · ${row.userAgent}` : ""}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.device ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.country ?? "—"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
                       {formatWhen(row.loginAt)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                      {formatWhen(row.logoutAt)}
+                      {formatWhen(row.lastSeenAt ?? row.logoutAt)}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={sessionStatusVariant(row.status)}>{row.status}</Badge>

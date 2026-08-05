@@ -6,7 +6,11 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { users } from "@/server/db/schema";
 import type { Role } from "@/server/db/schema";
-import { recordLoginSession } from "@/server/services/login-sessions";
+import {
+  recordLoginSession,
+  touchSession,
+  SESSION_TOUCH_INTERVAL_MS,
+} from "@/server/services/login-sessions";
 
 declare module "next-auth" {
   interface Session {
@@ -41,6 +45,8 @@ type AuthToken = {
   sub?: string;
   mustChangePassword?: boolean;
   loginSessionId?: string | null;
+  /** Epoch ms of last lastSeenAt touch (JWT-side throttle). */
+  lastSeenTouchAt?: number;
 };
 
 const credentialsSchema = z.object({
@@ -115,6 +121,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.timezone = session.timezone ?? t.timezone;
         if (typeof session.mustChangePassword === "boolean") {
           t.mustChangePassword = session.mustChangePassword;
+        }
+      }
+      // Keep last online / last portal use fresh while the JWT is used
+      if (t.loginSessionId) {
+        const now = Date.now();
+        const last = t.lastSeenTouchAt ?? 0;
+        if (now - last >= SESSION_TOUCH_INTERVAL_MS) {
+          t.lastSeenTouchAt = now;
+          void touchSession(t.loginSessionId);
         }
       }
       return t;

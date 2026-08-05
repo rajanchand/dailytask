@@ -121,12 +121,97 @@ export async function getDatabaseUserDetailAction(userId: string) {
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))
     .where(eq(teamMembers.userId, userId));
 
+  const sessionSelect = {
+    id: userSessions.id,
+    ipAddress: userSessions.ipAddress,
+    userAgent: userSessions.userAgent,
+    browser: userSessions.browser,
+    os: userSessions.os,
+    device: userSessions.device,
+    country: userSessions.country,
+    isp: userSessions.isp,
+    status: userSessions.status,
+    loginAt: userSessions.loginAt,
+    lastSeenAt: userSessions.lastSeenAt,
+    logoutAt: userSessions.logoutAt,
+  } as const;
+
+  const sessions = await db
+    .select(sessionSelect)
+    .from(userSessions)
+    .where(eq(userSessions.userId, userId))
+    .orderBy(desc(userSessions.loginAt))
+    .limit(10);
+
+  const [sessionTotal] = await db
+    .select({ value: count() })
+    .from(userSessions)
+    .where(eq(userSessions.userId, userId));
+
+  const latest = sessions[0] ?? null;
+  // Prefer most recent lastSeenAt across recent rows for "last online"
+  let lastOnlineAt: Date | null = null;
+  let lastUsedPortalAt: Date | null = null;
+  for (const s of sessions) {
+    const seen = s.lastSeenAt ?? s.loginAt;
+    if (!seen) continue;
+    if (!lastOnlineAt || seen.getTime() > lastOnlineAt.getTime()) lastOnlineAt = seen;
+    if (!lastUsedPortalAt || seen.getTime() > lastUsedPortalAt.getTime()) lastUsedPortalAt = seen;
+  }
+  if (!lastOnlineAt && latest) {
+    lastOnlineAt = latest.lastSeenAt ?? latest.loginAt;
+    lastUsedPortalAt = latest.lastSeenAt ?? latest.loginAt;
+  }
+
+  const telemetry = {
+    lastIp: latest?.ipAddress ?? null,
+    lastIsp: latest?.isp ?? null,
+    lastBrowser: latest?.browser ?? null,
+    lastOs: latest?.os ?? null,
+    lastDevice: latest?.device ?? null,
+    lastCountry: latest?.country ?? null,
+    lastOnlineAt,
+    lastUsedPortalAt,
+    createdAt: user.createdAt,
+    sessionCount: Number(sessionTotal?.value ?? 0),
+  };
+
+  return {
+    ok: true as const,
+    user,
+    memberships,
+    sessions,
+    telemetry,
+    sessionsHasMore: Number(sessionTotal?.value ?? 0) > sessions.length,
+  };
+}
+
+export async function listDatabaseUserSessionsAction(
+  userId: string,
+  opts?: { offset?: number; limit?: number },
+) {
+  try {
+    await requireDbConsole();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Forbidden";
+    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+  }
+
+  if (!userId) return { error: "User id required" };
+
+  const limit = Math.min(Math.max(opts?.limit ?? 25, 1), 100);
+  const offset = Math.max(opts?.offset ?? 0, 0);
+
   const sessions = await db
     .select({
       id: userSessions.id,
       ipAddress: userSessions.ipAddress,
+      userAgent: userSessions.userAgent,
       browser: userSessions.browser,
+      os: userSessions.os,
       device: userSessions.device,
+      country: userSessions.country,
+      isp: userSessions.isp,
       status: userSessions.status,
       loginAt: userSessions.loginAt,
       lastSeenAt: userSessions.lastSeenAt,
@@ -135,9 +220,24 @@ export async function getDatabaseUserDetailAction(userId: string) {
     .from(userSessions)
     .where(eq(userSessions.userId, userId))
     .orderBy(desc(userSessions.loginAt))
-    .limit(25);
+    .limit(limit)
+    .offset(offset);
 
-  return { ok: true as const, user, memberships, sessions };
+  const [sessionTotal] = await db
+    .select({ value: count() })
+    .from(userSessions)
+    .where(eq(userSessions.userId, userId));
+
+  const total = Number(sessionTotal?.value ?? 0);
+
+  return {
+    ok: true as const,
+    sessions,
+    total,
+    offset,
+    limit,
+    hasMore: offset + sessions.length < total,
+  };
 }
 
 export async function updateDatabaseUserAction(input: unknown) {

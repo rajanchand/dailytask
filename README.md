@@ -76,6 +76,9 @@ SMTP_PASS=
 # System Health: prefer first-time setup at /system-health (DB-backed).
 # Optional cookie HMAC (defaults to AUTH_SECRET):
 SYSTEM_HEALTH_SECRET=
+# Login session GeoIP (country/ISP on user_sessions). Default: free ip-api.com, no key.
+# GEOIP_DISABLED=1
+# GEOIP_LOOKUP_URL=http://ip-api.com/json/{ip}?fields=status,country,isp,query
 # optional
 DISCORD_BOT_TOKEN=
 POSTGRES_PASSWORD=<strong-password>

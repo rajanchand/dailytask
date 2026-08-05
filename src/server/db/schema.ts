@@ -344,7 +344,7 @@ export const sessionStatusEnum = pgEnum("session_status", [
   "expired",
 ]);
 
-/** Login / security telemetry for System Health (IP, UA, logout times). */
+/** Login / security telemetry for System Health (IP, UA, geo, logout times). */
 export const userSessions = pgTable(
   "user_sessions",
   {
@@ -355,7 +355,10 @@ export const userSessions = pgTable(
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
     browser: text("browser"),
+    os: text("os"),
     device: text("device"),
+    country: text("country"),
+    isp: text("isp"),
     status: sessionStatusEnum("status").notNull().default("active"),
     loginAt: timestamp("login_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
