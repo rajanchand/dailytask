@@ -62,6 +62,9 @@ if [ "${RUN_SEED:-false}" = "true" ] && [ "${NODE_ENV:-}" = "production" ]; then
 fi
 
 echo "[entrypoint] Applying schema (drizzle-kit push)..."
+# Production currently uses push for safe additive sync against live DBs that were
+# bootstrapped without a migrations journal. Prefer `pnpm db:migrate` after you
+# baseline (see README → Drizzle migrations). Do not switch blindly on prod.
 # Bypass pnpm script deps/supply-chain checks — binaries already in the image
 if [ -x ./node_modules/.bin/drizzle-kit ]; then
   ./node_modules/.bin/drizzle-kit push

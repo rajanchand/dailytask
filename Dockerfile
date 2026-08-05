@@ -40,11 +40,13 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/workers ./workers
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/drizzle.config.ts ./
+COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/tsconfig.json ./
 COPY --from=builder /app/next.config.ts ./
 COPY --from=builder /app/.npmrc ./
 COPY scripts/docker-entrypoint.sh /app/scripts/docker-entrypoint.sh
 RUN chmod +x /app/scripts/docker-entrypoint.sh \
+  && chmod +x /app/scripts/backup-postgres.sh /app/scripts/health-watch.sh /app/scripts/smoke-prod.sh 2>/dev/null || true \
   && printf '%s\n' 'minimumReleaseAge=0' 'dangerouslyAllowAllBuilds=true' > /app/.npmrc
 EXPOSE 3000
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

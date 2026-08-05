@@ -8,6 +8,7 @@ import { tasks, users, dailySummaries, reminders, calendarEntries } from "../src
 import { createNotification, logActivity } from "../src/server/services/activity";
 import { sendDiscordWebhook } from "../src/server/services/discord";
 import { newId, todayISO } from "../src/lib/utils";
+import { logger } from "../src/server/logger";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
@@ -82,7 +83,7 @@ function todayISOInTimezone(timeZone: string, date = new Date()): string {
 }
 
 async function morningReminderJob() {
-  console.log("[worker] Running morning task report (08:30 local window)...");
+  logger.info("worker.job.start", { job: "morning-reminder" });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -143,7 +144,7 @@ async function morningReminderJob() {
 }
 
 async function tomorrowPreviewJob() {
-  console.log("[worker] Running tomorrow preview...");
+  logger.info("worker.job.start", { job: "tomorrow-preview" });
   const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -182,7 +183,7 @@ async function tomorrowPreviewJob() {
 }
 
 async function deadlineCheckJob() {
-  console.log("[worker] Running deadline check...");
+  logger.info("worker.job.start", { job: "deadline-check" });
   const now = new Date();
   const in30 = new Date(now.getTime() + 30 * 60 * 1000);
 
@@ -261,7 +262,7 @@ async function deadlineCheckJob() {
 }
 
 async function overdueMarkJob() {
-  console.log("[worker] Running overdue mark...");
+  logger.info("worker.job.start", { job: "overdue-mark" });
   const today = todayISO();
 
   const overdueTasks = await db
@@ -306,7 +307,7 @@ async function overdueMarkJob() {
 }
 
 async function eodSummaryJob() {
-  console.log("[worker] Running EOD summary (17:00 local window)...");
+  logger.info("worker.job.start", { job: "eod-summary" });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -423,9 +424,11 @@ async function setupRepeatableJobs(queue: Queue) {
   for (const { id, pattern } of schedulers) {
     await queue.upsertJobScheduler(id, { pattern }, { name: id, data: {} });
   }
-  console.log(
-    "[worker] Repeatable jobs scheduled (morning ~08:30 local, EOD ~17:00 local, every 15m tick)",
-  );
+  logger.info("worker.schedulers.ready", {
+    morningLocal: "08:30",
+    eodLocal: "17:00",
+    tick: "*/15",
+  });
 }
 
 async function main() {
@@ -436,7 +439,7 @@ async function main() {
   const runOnce = process.argv.find((a) => a.startsWith("--run="))?.split("=")[1];
   if (runOnce && jobHandlers[runOnce]) {
     await jobHandlers[runOnce]();
-    console.log(`[worker] Ran ${runOnce} once`);
+    logger.info("worker.run_once.done", { job: runOnce });
     process.exit(0);
   }
 
@@ -445,17 +448,19 @@ async function main() {
     async (job) => {
       const handler = jobHandlers[job.name];
       if (handler) await handler();
-      else console.warn(`Unknown job: ${job.name}`);
+      else logger.warn("worker.job.unknown", { job: job.name });
     },
     { connection },
   );
 
-  worker.on("completed", (job) => console.log(`[worker] Completed: ${job.name}`));
-  worker.on("failed", (job, err) => console.error(`[worker] Failed: ${job?.name}`, err));
-  worker.on("error", (err) => console.error("[worker] Worker error", err));
+  worker.on("completed", (job) => logger.info("worker.job.completed", { job: job.name }));
+  worker.on("failed", (job, err) =>
+    logger.error("worker.job.failed", { job: job?.name, err }),
+  );
+  worker.on("error", (err) => logger.error("worker.error", { err }));
 
   function shutdown(signal: string) {
-    console.log(`[worker] ${signal} received — closing`);
+    logger.info("worker.shutdown", { signal });
     void worker
       .close()
       .then(() => queue.close())
@@ -465,10 +470,10 @@ async function main() {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  console.log("[worker] Dailyflow automation worker started");
+  logger.info("worker.started", { queue: QUEUE_NAME });
 }
 
 main().catch((err) => {
-  console.error("[worker] Fatal error:", err);
+  logger.error("worker.fatal", { err });
   process.exit(1);
 });

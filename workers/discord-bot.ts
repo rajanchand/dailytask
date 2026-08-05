@@ -8,10 +8,12 @@ import {
 } from "discord.js";
 import { parseDiscordCommand, runDiscordCommand } from "../src/server/services/discord-commands";
 import { ensureRedisConnected, getRedisClient } from "../src/server/security/redis";
+import { logger } from "../src/server/logger";
 
 const token = process.env.DISCORD_BOT_TOKEN;
 
 if (!token) {
+  logger.error("discord_bot.missing_token");
   console.error(
     "[discord-bot] Missing DISCORD_BOT_TOKEN in .env\n" +
       "Create a bot at https://discord.com/developers/applications → Bot → Reset Token\n" +
@@ -31,9 +33,7 @@ async function claimMessage(messageId: string): Promise<boolean> {
   const client = getRedisClient();
   if (!client) {
     if (isProd) {
-      console.warn(
-        "[discord-bot] REDIS_URL missing — duplicate replies possible if multiple bot processes run. Run exactly one bot replica.",
-      );
+      logger.warn("discord_bot.redis_missing");
     }
     if (claimedLocally.has(messageId)) return false;
     claimedLocally.add(messageId);
@@ -51,7 +51,7 @@ async function claimMessage(messageId: string): Promise<boolean> {
     const result = await client.set(`discord:msg:${messageId}`, "1", "EX", 120, "NX");
     return result === "OK";
   } catch (err) {
-    console.warn("[discord-bot] claimMessage redis error — falling back to in-process claim", err);
+    logger.warn("discord_bot.claim_redis_error", { err: String(err) });
     if (claimedLocally.has(messageId)) return false;
     claimedLocally.add(messageId);
     setTimeout(() => claimedLocally.delete(messageId), 120_000).unref?.();
@@ -69,19 +69,14 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`[discord-bot] Logged in as ${c.user.tag}`);
-  console.log(
-    "[discord-bot] Listening for: today task | report | weekly report | help",
-  );
+  logger.info("discord_bot.ready", { user: c.user.tag });
   if (!process.env.REDIS_URL) {
-    console.warn(
-      "[discord-bot] Tip: set REDIS_URL so only one instance replies when multiple bots are online.",
-    );
+    logger.warn("discord_bot.redis_url_unset");
   }
 });
 
 function shutdown(signal: string) {
-  console.log(`[discord-bot] ${signal} received — shutting down`);
+  logger.info("discord_bot.shutdown", { signal });
   client.destroy();
   process.exit(0);
 }
@@ -99,7 +94,7 @@ client.on(Events.MessageCreate, async (message) => {
     if (!command) return;
 
     if (!(await claimMessage(message.id))) {
-      console.log(`[discord-bot] skip duplicate handler for ${message.id}`);
+      logger.info("discord_bot.skip_duplicate", { messageId: message.id });
       return;
     }
 
@@ -116,8 +111,9 @@ client.on(Events.MessageCreate, async (message) => {
         await message.channel.send({ content: chunk });
       }
     }
+    logger.info("discord_bot.replied", { command, messageId: message.id });
   } catch (err) {
-    console.error("[discord-bot] message handler error", err);
+    logger.error("discord_bot.message_handler_error", { err });
     try {
       await message.reply("Something went wrong fetching tasks. Try again.");
     } catch {
@@ -127,6 +123,6 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 client.login(token).catch((err) => {
-  console.error("[discord-bot] login failed", err);
+  logger.error("discord_bot.login_failed", { err });
   process.exit(1);
 });

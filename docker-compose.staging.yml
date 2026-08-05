@@ -1,0 +1,97 @@
+# Staging stub — mirror of prod with isolated volumes / weaker resource caps.
+# Copy .env.example → .env.staging, set AUTH_URL/APP_URL to the staging host,
+# then: docker compose -f docker-compose.staging.yml --env-file .env.staging --profile worker up -d --build
+#
+# Do NOT point staging at production volumes or the live Postgres data directory.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dailyflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-dailyflow}
+    volumes:
+      - dailyflow_pg_staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - dailyflow_staging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - dailyflow_redis_staging:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - dailyflow_staging
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3001}:3000"
+    env_file:
+      - ${ENV_FILE:-.env.staging}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dailyflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dailyflow}
+      REDIS_URL: redis://redis:6379
+      PORT: "3000"
+      UPLOAD_DIR: /app/uploads
+      RUN_SEED: ${RUN_SEED:-false}
+    volumes:
+      - dailyflow_uploads_staging:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dailyflow_staging
+    mem_limit: ${APP_MEM_LIMIT:-1024m}
+    cpus: ${APP_CPUS:-1.0}
+
+  worker:
+    profiles: ["worker"]
+    build: .
+    restart: unless-stopped
+    command: ["pnpm", "worker"]
+    env_file:
+      - ${ENV_FILE:-.env.staging}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dailyflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dailyflow}
+      REDIS_URL: redis://redis:6379
+      RUN_SEED: "false"
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - dailyflow_uploads_staging:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - dailyflow_staging
+
+volumes:
+  dailyflow_pg_staging:
+  dailyflow_redis_staging:
+  dailyflow_uploads_staging:
+
+networks:
+  dailyflow_staging:
+    driver: bridge

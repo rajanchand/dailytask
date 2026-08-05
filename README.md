@@ -116,15 +116,78 @@ docker compose -f docker-compose.prod.yml exec \
 
 ### 2b. Postgres backups
 
-Take logical dumps regularly (cron on the VPS):
+Use the bundled script (stores dumps under `/opt/dailytask/backups`, retains 14 days):
 
 ```bash
-cd /opt/dailytask
-docker compose -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U dailyflow -d dailyflow -Fc > "/var/backups/dailytask-$(date +%F).dump"
+chmod +x /opt/dailytask/scripts/backup-postgres.sh
+APP_DIR=/opt/dailytask /opt/dailytask/scripts/backup-postgres.sh
 ```
 
-Retain several days off-box. Test a restore on a staging volume before you need it.
+Install a daily cron (example):
+
+```bash
+cat >/etc/cron.d/dailytask-backup <<'EOF'
+15 3 * * * root APP_DIR=/opt/dailytask /opt/dailytask/scripts/backup-postgres.sh >>/var/log/dailytask-backup.log 2>&1
+EOF
+chmod 644 /etc/cron.d/dailytask-backup
+```
+
+**Restore** (into a stopped/maintenance window — practice on staging first):
+
+```bash
+# List dumps
+ls -lh /opt/dailytask/backups/
+
+# Drop+recreate is destructive. Prefer restore into a fresh volume/DB name when testing.
+cd /opt/dailytask
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  pg_restore -U dailyflow -d dailyflow --clean --if-exists < /opt/dailytask/backups/dailyflow-YYYYMMDDTHHMMSSZ.dump
+```
+
+Off-box copies (rsync/S3) are strongly recommended — local dumps alone are not a DR plan.
+
+### 2c. Health watch (uptime)
+
+```bash
+chmod +x /opt/dailytask/scripts/health-watch.sh
+# Optional: export HEALTH_ALERT_WEBHOOK_URL in the cron line if you want Discord alerts
+cat >/etc/cron.d/dailytask-health <<'EOF'
+*/5 * * * * root HEALTH_URL=http://127.0.0.1:3000/api/health /opt/dailytask/scripts/health-watch.sh >>/var/log/dailytask-health.log 2>&1
+EOF
+chmod 644 /etc/cron.d/dailytask-health
+```
+
+On HTTP 503/non-200 the script logs and optionally posts to Discord (with a 15m cooldown).
+
+### 2d. Smoke checklist
+
+```bash
+./scripts/smoke-prod.sh https://dailytask.zero-trust-security.org
+# or on the VPS:
+BASE_URL=http://127.0.0.1:3000 ./scripts/smoke-prod.sh
+```
+
+### 2e. Staging stub
+
+`docker-compose.staging.yml` uses separate volumes and defaults to host port `3001`. Use a dedicated `.env.staging` — never share production Postgres volumes.
+
+```bash
+cp .env.example .env.staging
+# set AUTH_URL / APP_URL / POSTGRES_PASSWORD for staging
+docker compose -f docker-compose.staging.yml --env-file .env.staging --profile worker up -d --build
+```
+
+### 2f. Secret rotation (ops)
+
+| Secret | Rotate how | Notes |
+| --- | --- | --- |
+| `AUTH_SECRET` | Generate `openssl rand -base64 48`, update `.env`, recreate `app` (+ worker/bot). | Invalidates existing sessions (users re-login). |
+| `POSTGRES_PASSWORD` | 1) Take a backup. 2) Update Postgres role password inside the container. 3) Update `.env` `POSTGRES_PASSWORD`. 4) Recreate app/worker/bot so `DATABASE_URL` picks up the new password. | Do not only change `.env` — the running Postgres role must match. |
+| Discord bot token | Reset in Discord Developer Portal → update `DISCORD_BOT_TOKEN` → recreate `bot`. | Required if the token was ever pasted in chat. |
+| SMTP password | Rotate at provider → update `SMTP_PASS` → recreate `app`. | Prefer verifying mail still works after. |
+| VPS root password | `passwd` after confirming SSH key login works. | Do not disable password auth until key login is proven. |
+
+SSH key deploy (recommended): add your public key to `~/.ssh/authorized_keys`, set GitHub secret `VPS_SSH_KEY`, use `scripts/deploy-vps.sh` with `VPS_SSH_KEY=…`. Keep password auth until a successful key deploy.
 
 ### 3. Nginx (TLS reverse proxy)
 
@@ -151,9 +214,16 @@ server {
 
 Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other security headers from `next.config.ts`.
 
+Confirm Certbot renew timer on the VPS:
+
+```bash
+systemctl list-timers 'certbot*' --no-pager
+certbot renew --dry-run
+```
+
 ### 4. Health check
 
-`GET /api/health` → probes Postgres (+ Redis status). HTTP **200** when DB is up (`status: "ok"` or `"degraded"` if Redis is down); **503** when Postgres is unreachable.
+`GET /api/health` → probes Postgres (+ Redis status) and reports uploads size. HTTP **200** when DB is up (`status: "ok"` or `"degraded"` if Redis is down); **503** when Postgres is unreachable. When uploads exceed `HEALTH_UPLOADS_WARN_MB` (default 2048), `checks.uploads.warn` is `true` (still 200).
 
 ```bash
 curl -fsS https://your-domain.com/api/health
@@ -168,6 +238,7 @@ System Health is gated in the database (`system_health_credentials`):
 3. After 5 failed unlock attempts (password and/or PIN) the row is `locked`; unlock is refused until a super admin uses **Unblock System Health** (normal app session, no ops password) or runs SQL below.
 4. Success sets a short-lived httpOnly cookie (`df_sys_health`, 30m) for diagnostics (DB metrics, login sessions with IP/UA/logout).
 5. **Open database** requires a second re-auth (same password or 6-digit code) and sets `df_sys_health_db` (10m). Direct navigation to `/system-health/database` shows the challenge until that cookie is set. **Lock System Health** clears both cookies. Failed DB re-auth attempts share the same `failed_count` / 5-fail lockout.
+6. Idle: System Health locks after 3 minutes of inactivity; a second idle window signs out the app session (`IdleTimeoutGuard`).
 
 Manual unblock in Postgres:
 
@@ -175,6 +246,36 @@ Manual unblock in Postgres:
 UPDATE system_health_credentials
 SET locked = false, locked_at = NULL, failed_count = 0, updated_at = NOW();
 ```
+
+### 4b. Drizzle migrations (transition from `db:push`)
+
+Today the container entrypoint still runs **`drizzle-kit push`** so existing production databases (created without a migrations journal) keep receiving additive schema sync without wipe risk.
+
+A baseline SQL migration lives in [`drizzle/0000_*.sql`](drizzle/). To move to `pnpm db:migrate` later **without destroying data**:
+
+1. Take a Postgres backup.
+2. On a staging clone of prod, run `pnpm db:migrate` (or mark the baseline as already applied if the schema already matches — drizzle `__drizzle_migrations` journal).
+3. Diff schema vs prod; only switch the entrypoint from `push` → `migrate` after staging is green.
+4. Keep using `pnpm db:generate` for future schema changes; review the SQL before applying.
+
+Do **not** run destructive migrate/push flags against live data. Do **not** set `RUN_SEED=true` on prod.
+
+### 4c. Structured logs → Loki (later)
+
+Workers and the Discord bot emit JSON lines via `src/server/logger.ts` (`ts`, `level`, `msg`, `service`, …). Docker already captures stdout/stderr.
+
+To ship to Grafana Loki later (sketch only):
+
+```yaml
+# docker-compose logging option or Promtail scrape
+# - job_name: dailytask
+#   docker_sd_configs: …
+#   pipeline_stages:
+#     - docker: {}
+#     - json: { expressions: { level: level, msg: msg } }
+```
+
+Until then: `docker compose -f docker-compose.prod.yml logs -f worker bot app`.
 
 ### 5. Production DB inspection (Docker Postgres)
 
@@ -270,8 +371,13 @@ pm2 save
 | `pnpm worker` | Automation jobs |
 | `pnpm discord:bot` | Keyword Discord bot |
 | `pnpm discord:test` | Send sample Discord reports via webhook |
-| `pnpm db:push` | Apply schema |
+| `pnpm db:push` | Apply schema (current prod entrypoint) |
+| `pnpm db:generate` / `pnpm db:migrate` | Migration workflow (see §4b) |
 | `pnpm db:seed` | Seed demo users/tasks |
+| `scripts/backup-postgres.sh` | Logical dump → `/opt/dailytask/backups` |
+| `scripts/health-watch.sh` | Curl `/api/health`; optional Discord alert |
+| `scripts/smoke-prod.sh` | Health + login smoke |
+| `scripts/deploy-vps.sh` | Rsync + compose rebuild |
 
 ## Security notes
 
@@ -283,7 +389,7 @@ pm2 save
 - Configure SMTP before inviting users (invites roll back if email fails)
 - Rate limits (login/register/forgot/invite/profile/change-password/Discord/PDF/avatar/task-delete) use Redis when `REDIS_URL` is set
 - Auth.js uses Secure cookies in production (`useSecureCookies`) + `trustHost` behind Nginx
-- Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
+- Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP (no `unsafe-eval`), and HSTS
 - User queries never return `passwordHash` to the client (team list, settings, system health)
 - System Health (`/system-health`) is visible/usable only to `super_admin`, plus a separate DB-backed ops email/password/PIN gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
 - Ops credentials are stored hashed in `system_health_credentials`; lockouts require super-admin unblock or SQL — never commit real secrets
