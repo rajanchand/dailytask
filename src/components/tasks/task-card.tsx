@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { StatusBadge } from "@/components/tasks/status-badge";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
 import { EditTaskButton, type EditableTask } from "@/components/tasks/edit-task-button";
+import { TaskStatusSelect } from "@/components/tasks/task-status-select";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Bell, Clock, User } from "lucide-react";
@@ -65,7 +65,13 @@ export function TaskCard({
               <h3 className="font-medium leading-snug">{task.title}</h3>
             )}
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={task.status} />
+              {canEdit ? (
+                <TaskStatusSelect taskId={task.id} status={task.status} />
+              ) : (
+                <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs">
+                  {task.status.replaceAll("_", " ")}
+                </span>
+              )}
               {isDaily && (
                 <span
                   className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[11px] font-medium text-teal-700 dark:border-teal-900 dark:bg-teal-950 dark:text-teal-200"

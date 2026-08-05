@@ -61,14 +61,22 @@ export function EditTaskButton({
 
   function handleSave(formData: FormData) {
     if (lockProjectId) formData.set("projectId", lockProjectId);
+    // Keep existing project when the select submits blank unexpectedly.
+    if (!String(formData.get("projectId") ?? "").trim() && task.projectId) {
+      formData.set("projectId", task.projectId);
+    }
     startTransition(async () => {
-      const result = await updateTaskAction(task.id, formData);
-      if (result?.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Task updated");
-        setOpen(false);
-        router.refresh();
+      try {
+        const result = await updateTaskAction(task.id, formData);
+        if (result?.error) {
+          toast.error(result.error);
+        } else {
+          toast.success("Task updated");
+          setOpen(false);
+          router.refresh();
+        }
+      } catch {
+        toast.error("Could not save task. Please try again.");
       }
     });
   }
