@@ -126,14 +126,58 @@ function formatTaskLine(
   return `${index}. ${task.title}${bits.length ? ` (${bits.join(" · ")})` : ""}`;
 }
 
+const WEEKDAY_NAMES = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
+/** Parse project name like "Monday" / "monday checklist" → 0–6 (Sun–Sat), else null. */
+function weekdayIndexFromProjectName(name: string | null | undefined): number | null {
+  if (!name) return null;
+  const normalized = name.trim().toLowerCase();
+  const exact = WEEKDAY_NAMES.indexOf(normalized as (typeof WEEKDAY_NAMES)[number]);
+  if (exact >= 0) return exact;
+  for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
+    if (normalized === WEEKDAY_NAMES[i] || normalized.startsWith(`${WEEKDAY_NAMES[i]} `)) {
+      return i;
+    }
+  }
+  return null;
+}
+
+function weekdayIndexFromISODate(isoDate: string): number {
+  // Parse as UTC noon to avoid TZ edge cases on the calendar date string.
+  const d = new Date(`${isoDate}T12:00:00.000Z`);
+  return d.getUTCDay();
+}
+
+/** Next calendar date (YYYY-MM-DD) for target weekday on or after `fromISO`. */
+function dateOnOrAfterWeekday(fromISO: string, targetWeekday: number): string {
+  const from = new Date(`${fromISO}T12:00:00.000Z`);
+  const delta = (targetWeekday - from.getUTCDay() + 7) % 7;
+  return format(addDays(from, delta), "yyyy-MM-dd");
+}
+
 /**
  * Every morning: bring daily / project checklist tasks back for today.
  * Same rows are reused (no duplicates) — date → today, status → not_started.
+ *
+ * Weekday-named projects (Monday…Friday) only reset on that weekday; other
+ * days are parked on the next matching weekday so they do not flood "today".
  */
 async function ensureDailyTasksForToday(userId: string, today: string) {
   const dailyTasks = await db
-    .select()
+    .select({
+      task: tasks,
+      projectName: projects.name,
+    })
     .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
     .where(
       and(
         eq(tasks.assigneeId, userId),
@@ -142,9 +186,46 @@ async function ensureDailyTasksForToday(userId: string, today: string) {
       ),
     );
 
+  const todayWeekday = weekdayIndexFromISODate(today);
   let resetCount = 0;
-  for (const task of dailyTasks) {
-    // Already fresh for today and not completed — leave progress alone.
+  let parkedCount = 0;
+
+  for (const row of dailyTasks) {
+    const task = row.task;
+    const projectWeekday = weekdayIndexFromProjectName(row.projectName);
+
+    // Weekday project for a different day → keep on next matching weekday.
+    if (projectWeekday !== null && projectWeekday !== todayWeekday) {
+      const onOrAfter = dateOnOrAfterWeekday(today, projectWeekday);
+      const finalPark =
+        onOrAfter > today
+          ? onOrAfter
+          : format(addDays(new Date(`${today}T12:00:00.000Z`), 7), "yyyy-MM-dd");
+
+      if (
+        task.date !== finalPark ||
+        task.status === "completed" ||
+        task.isOverdue
+      ) {
+        await db
+          .update(tasks)
+          .set({
+            date: finalPark,
+            status: "not_started",
+            progress: 0,
+            completedAt: null,
+            isOverdue: false,
+            dueAt: task.dueTime ? new Date(`${finalPark}T${task.dueTime}:00`) : null,
+            dailyNotify: true,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, task.id));
+        parkedCount += 1;
+      }
+      continue;
+    }
+
+    // Everyday daily task, or weekday project matching today → reset for today.
     if (task.date === today && task.status !== "completed") {
       if (!task.dailyNotify) {
         await db
@@ -155,8 +236,7 @@ async function ensureDailyTasksForToday(userId: string, today: string) {
       continue;
     }
 
-    // Past days, or completed today/earlier → reset so the checklist shows again.
-    if (task.date <= today) {
+    if (task.date <= today || task.status === "completed") {
       await db
         .update(tasks)
         .set({
@@ -174,8 +254,8 @@ async function ensureDailyTasksForToday(userId: string, today: string) {
     }
   }
 
-  if (resetCount > 0) {
-    logger.info("worker.daily_tasks.reset", { userId, today, resetCount });
+  if (resetCount > 0 || parkedCount > 0) {
+    logger.info("worker.daily_tasks.reset", { userId, today, resetCount, parkedCount });
   }
 }
 
