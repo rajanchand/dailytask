@@ -3,7 +3,14 @@ import { headers } from "next/headers";
 import { db } from "@/server/db";
 import { userSessions } from "@/server/db/schema";
 import { newId } from "@/lib/utils";
-import { getClientIp } from "@/server/security/rate-limit";
+
+/** Local IP helper — keep Redis out of the auth import graph. */
+async function clientIpFromHeaders() {
+  const h = await headers();
+  const forwarded = h.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
+  return h.get("x-real-ip") || "unknown";
+}
 
 export function parseUserAgent(ua: string | null | undefined) {
   const raw = (ua || "").trim();
@@ -32,7 +39,7 @@ export async function recordLoginSession(userId: string) {
   const h = await headers();
   const userAgent = h.get("user-agent");
   const { browser, device } = parseUserAgent(userAgent);
-  const ipAddress = await getClientIp();
+  const ipAddress = await clientIpFromHeaders();
   const id = newId();
   const now = new Date();
 
