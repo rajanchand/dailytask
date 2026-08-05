@@ -39,6 +39,7 @@ export default async function ProjectDetailPage({ params }: Props) {
         userId: session!.user.id,
         role: session!.user.role as Role,
         canCreate: hasPermission(session!.user.role as Role, "tasks.create"),
+        canManageProject: hasPermission(session!.user.role as Role, "projects.manage"),
       }}
     />
   );
