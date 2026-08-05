@@ -100,12 +100,22 @@ export async function testDiscordIntegrationAction() {
     .where(eq(discordIntegrations.teamId, team.id))
     .limit(1);
 
-  if (!integration?.webhookUrl) return { error: "Save a webhook URL first" };
-
-  try {
-    await testDiscordWebhook(integration.webhookUrl);
-    return { ok: true };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : "Test failed" };
+  if (integration?.webhookUrl) {
+    try {
+      await testDiscordWebhook(integration.webhookUrl);
+      return { ok: true };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "Test failed" };
+    }
   }
+
+  // Fall back to bot channel send (same path as Send Report without webhook)
+  const { sendDiscordWebhook } = await import("@/server/services/discord");
+  const sent = await sendDiscordWebhook(null, "dailySummary", "Dailytask Manager connected — Discord sync is working.", {
+    ignoreEventFilter: true,
+  });
+  if (!sent.ok) {
+    return { error: sent.error || "Save a webhook URL first (or set DISCORD_CHANNEL_ID)." };
+  }
+  return { ok: true };
 }

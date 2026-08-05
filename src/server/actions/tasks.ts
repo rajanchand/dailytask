@@ -18,10 +18,11 @@ import {
 import type { TaskPriority, TaskStatus } from "@/server/db/schema";
 import { newId, todayISO, tomorrowISO, progressFromStatus } from "@/lib/utils";
 import { requireSession, requireUserPermission } from "@/server/session";
+import { hasPermission } from "@/server/rbac";
 import { createNotification, logActivity } from "@/server/services/activity";
 import { sendDiscordWebhook } from "@/server/services/discord";
 import { addDays, format, parseISO } from "date-fns";
-import { canAssignTask, canUpdateTask, canViewTask } from "@/server/task-access";
+import { canAssignTask, canDeleteTask, canUpdateTask, canViewTask } from "@/server/task-access";
 import type { Role } from "@/server/db/schema";
 
 const taskSchema = z.object({
@@ -59,6 +60,7 @@ function revalidateTaskPaths() {
   revalidatePath("/projects");
   revalidatePath("/analytics");
   revalidatePath("/notifications");
+  revalidatePath("/reports");
 }
 
 async function notifyAssignee(input: {
@@ -124,6 +126,12 @@ export async function createTaskAction(formData: FormData) {
       : null;
 
   const assigneeId = parsed.data.assigneeId || session.user.id;
+  if (
+    assigneeId !== session.user.id &&
+    !hasPermission(session.user.role as Role, "tasks.assign")
+  ) {
+    return { error: "You cannot assign tasks to others" };
+  }
   const progress =
     parsed.data.progress ??
     (parsed.data.status === "completed" ? 100 : progressFromStatus(parsed.data.status));
@@ -456,16 +464,22 @@ export async function rescheduleTaskAction(taskId: string, date: string, dueTime
 }
 
 export async function deleteTaskAction(taskId: string) {
-  const session = await requireUserPermission("tasks.manage_team");
+  const session = await requireSession();
   const [existing] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
   if (!existing) return { error: "Not found" };
 
+  if (!canDeleteTask(session.user.role as Role, session.user.id, existing)) {
+    return { error: "Forbidden" };
+  }
+
+  // Hard delete — comments, attachments, and task_tags cascade via FK
   await db.delete(tasks).where(eq(tasks.id, taskId));
   await logActivity({
     userId: session.user.id,
     action: "task.deleted",
     entityType: "task",
     entityId: taskId,
+    taskId: null,
     details: { title: existing.title },
   });
   revalidateTaskPaths();

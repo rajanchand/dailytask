@@ -64,7 +64,10 @@ export async function sendReportToDiscordAction(kind: ReportKind) {
   }
 
   const content = await buildReportByKind(kind);
-  const sent = await sendDiscordWebhook(null, "dailySummary", content);
+  // Manual Send Report always posts when a webhook exists (do not gate on Daily Summary checkbox).
+  const sent = await sendDiscordWebhook(null, "dailySummary", content, {
+    ignoreEventFilter: true,
+  });
   if (!sent.ok) {
     return { ok: false as const, error: sent.error || "Could not send report" };
   }

@@ -28,3 +28,13 @@ export function canAssignTask(role: Role, userId: string, task: TaskAccess) {
   }
   return task.createdById === userId;
 }
+
+/** Assignee, creator, or roles with manage_all / manage_team. Viewers cannot delete. */
+export function canDeleteTask(role: Role, userId: string, task: TaskAccess) {
+  if (hasPermission(role, "tasks.manage_all") || hasPermission(role, "tasks.manage_team")) {
+    return true;
+  }
+  // Same gate as update: members (update_assigned) on own tasks; viewers lack this permission
+  if (!hasPermission(role, "tasks.update_assigned")) return false;
+  return task.assigneeId === userId || task.createdById === userId;
+}

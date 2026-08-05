@@ -2,7 +2,7 @@ import "dotenv/config";
 import { hash } from "bcryptjs";
 import { sql } from "drizzle-orm";
 import { db } from "../src/server/db";
-import { users, teams, teamMembers } from "../src/server/db/schema";
+import { users, teams, teamMembers, discordIntegrations } from "../src/server/db/schema";
 
 function id() {
   return crypto.randomUUID();
@@ -15,7 +15,10 @@ function id() {
 async function seed() {
   console.log("Resetting database to a clean Rajanchand-only workspace...");
 
-  // Clear all app tables (FK-safe)
+  // Preserve Discord webhook across reseed (Send Report depends on it).
+  const [savedDiscord] = await db.select().from(discordIntegrations).limit(1);
+
+  // Clear all app tables (FK-safe). discord_integrations cascades off teams.
   await db.execute(sql`
     TRUNCATE TABLE
       activity_logs,
@@ -29,7 +32,6 @@ async function seed() {
       tags,
       categories,
       projects,
-      discord_integrations,
       team_members,
       teams,
       users
@@ -65,6 +67,49 @@ async function seed() {
     role: "super_admin",
     joinedAt: new Date(),
   });
+
+  if (savedDiscord?.webhookUrl) {
+    await db.insert(discordIntegrations).values({
+      id: id(),
+      teamId,
+      webhookUrl: savedDiscord.webhookUrl,
+      serverName: savedDiscord.serverName,
+      channelName: savedDiscord.channelName,
+      enabled: savedDiscord.enabled ?? true,
+      eventTypes: savedDiscord.eventTypes ?? {
+        taskCreated: true,
+        taskAssigned: true,
+        statusChanged: true,
+        taskCompleted: true,
+        taskOverdue: true,
+        morningReminder: true,
+        dailySummary: true,
+      },
+    });
+    console.log("Restored Discord webhook integration.");
+  } else {
+    const envWebhook = process.env.DISCORD_WEBHOOK_URL?.trim();
+    if (envWebhook?.startsWith("https://discord.com/api/webhooks/")) {
+      await db.insert(discordIntegrations).values({
+        id: id(),
+        teamId,
+        webhookUrl: envWebhook,
+        serverName: process.env.DISCORD_SERVER_NAME || null,
+        channelName: process.env.DISCORD_CHANNEL_NAME || "#dailyflow",
+        enabled: true,
+        eventTypes: {
+          taskCreated: true,
+          taskAssigned: true,
+          statusChanged: true,
+          taskCompleted: true,
+          taskOverdue: true,
+          morningReminder: true,
+          dailySummary: true,
+        },
+      });
+      console.log("Installed Discord webhook from DISCORD_WEBHOOK_URL.");
+    }
+  }
 
   console.log("Seed complete — fresh workspace.");
   console.log("Super admin login:");

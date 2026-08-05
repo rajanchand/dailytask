@@ -27,9 +27,11 @@ import {
   updateTaskProgressAction,
   assignTaskAction,
 } from "@/server/actions/tasks";
+import { canAssignTask, canDeleteTask, canUpdateTask } from "@/server/task-access";
+import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { Progress } from "@/components/ui/progress";
-import type { TaskStatus } from "@/server/db/schema";
+import type { Role, TaskStatus } from "@/server/db/schema";
 
 type Task = {
   id: string;
@@ -38,8 +40,14 @@ type Task = {
   status: string;
   progress?: number | null;
   assigneeId?: string | null;
+  createdById: string;
   assigneeName?: string | null;
   dueTime?: string | null;
+};
+
+type Access = {
+  userId: string;
+  role: Role;
 };
 
 type UserOption = { id: string; name: string };
@@ -59,15 +67,21 @@ const collisionDetection: CollisionDetection = (args) => {
 function KanbanCard({
   task,
   users,
+  access,
 }: {
   task: Task;
   users: UserOption[];
+  access: Access;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const canEdit = canUpdateTask(access.role, access.userId, task);
+  const canAssign = canAssignTask(access.role, access.userId, task);
+  const canDelete = canDeleteTask(access.role, access.userId, task);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { type: "task", status: task.status },
+    disabled: !canEdit,
   });
 
   function onProgress(value: number) {
@@ -108,17 +122,26 @@ function KanbanCard({
       )}
     >
       <div className="flex items-start gap-2">
-        <button
-          type="button"
-          className="mt-0.5 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
-          aria-label="Drag task"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            className="mt-0.5 cursor-grab touch-none text-muted-foreground active:cursor-grabbing"
+            aria-label="Drag task"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        ) : (
+          <span className="mt-0.5 w-4" />
+        )}
         <div className="min-w-0 flex-1 space-y-2">
-          <p className="text-sm font-medium leading-snug">{task.title}</p>
+          <div className="flex items-start justify-between gap-1">
+            <p className="text-sm font-medium leading-snug">{task.title}</p>
+            {canDelete && (
+              <DeleteTaskButton taskId={task.id} taskTitle={task.title} />
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <PriorityBadge priority={task.priority} />
             {task.dueTime && (
@@ -131,23 +154,26 @@ function KanbanCard({
               <span>{task.progress ?? 0}%</span>
             </div>
             <Progress value={task.progress ?? 0} />
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              defaultValue={task.progress ?? 0}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              onMouseUp={(e) => onProgress(Number((e.target as HTMLInputElement).value))}
-              onTouchEnd={(e) => onProgress(Number((e.target as HTMLInputElement).value))}
-              className="w-full accent-[var(--primary)]"
-              aria-label="Update progress"
-            />
+            {canEdit && (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                defaultValue={task.progress ?? 0}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onMouseUp={(e) => onProgress(Number((e.target as HTMLInputElement).value))}
+                onTouchEnd={(e) => onProgress(Number((e.target as HTMLInputElement).value))}
+                className="w-full accent-[var(--primary)]"
+                aria-label="Update progress"
+              />
+            )}
           </div>
           <select
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs disabled:opacity-60"
             value={task.status}
+            disabled={!canEdit}
             onPointerDown={(e) => e.stopPropagation()}
             onChange={(e) => onStatus(e.target.value)}
             aria-label="Change status"
@@ -159,8 +185,9 @@ function KanbanCard({
             ))}
           </select>
           <select
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs disabled:opacity-60"
             value={task.assigneeId ?? ""}
+            disabled={!canAssign}
             onPointerDown={(e) => e.stopPropagation()}
             onChange={(e) => onAssign(e.target.value)}
             aria-label="Assign user"
@@ -182,10 +209,12 @@ function Column({
   status,
   tasks,
   users,
+  access,
 }: {
   status: string;
   tasks: Task[];
   users: UserOption[];
+  access: Access;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: columnId(status),
@@ -209,7 +238,7 @@ function Column({
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <div className="flex min-h-[280px] flex-1 flex-col gap-2 p-3">
           {tasks.map((task) => (
-            <KanbanCard key={task.id} task={task} users={users} />
+            <KanbanCard key={task.id} task={task} users={users} access={access} />
           ))}
           {tasks.length === 0 && (
             <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
@@ -225,9 +254,11 @@ function Column({
 export function KanbanBoard({
   initialTasks,
   users,
+  access,
 }: {
   initialTasks: Task[];
   users: UserOption[];
+  access: Access;
 }) {
   const router = useRouter();
   const [tasks, setTasks] = useState(initialTasks);
@@ -278,6 +309,11 @@ export function KanbanBoard({
 
     if (!newStatus || newStatus === task.status) return;
 
+    if (!canUpdateTask(access.role, access.userId, task)) {
+      toast.error("Forbidden");
+      return;
+    }
+
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
@@ -317,7 +353,7 @@ export function KanbanBoard({
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
           {columns.map(({ status, tasks: colTasks }) => (
-            <Column key={status} status={status} tasks={colTasks} users={users} />
+            <Column key={status} status={status} tasks={colTasks} users={users} access={access} />
           ))}
         </div>
         <DragOverlay>

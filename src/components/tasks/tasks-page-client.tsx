@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createTaskAction } from "@/server/actions/tasks";
+import { canDeleteTask } from "@/server/task-access";
 import { STATUS_LABELS, PRIORITY_LABELS } from "@/lib/utils";
+import type { Role } from "@/server/db/schema";
 
 type Task = {
   id: string;
@@ -22,7 +24,10 @@ type Task = {
   dueTime?: string | null;
   status: string;
   priority: string;
+  progress?: number | null;
   isOverdue?: boolean;
+  assigneeId?: string | null;
+  createdById: string;
   assigneeName?: string | null;
   projectName?: string | null;
 };
@@ -35,9 +40,14 @@ type Props = {
     categories: { id: string; name: string }[];
   };
   filters: { date?: string; status?: string; priority?: string; q?: string };
+  access: {
+    userId: string;
+    role: Role;
+    canCreate: boolean;
+  };
 };
 
-export function TasksPageClient({ tasks, options, filters }: Props) {
+export function TasksPageClient({ tasks, options, filters, access }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -98,22 +108,24 @@ export function TasksPageClient({ tasks, options, filters }: Props) {
           <Button type="submit" variant="secondary">Filter</Button>
         </form>
 
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" />
-              Add Task
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Create Task</DialogTitle>
-            </DialogHeader>
-            <form action={handleCreate}>
-              <TaskForm options={options} defaultValues={{ date: filters.date }} pending={pending} submitLabel="Create Task" />
-            </form>
-          </DialogContent>
-        </Dialog>
+        {access.canCreate && (
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4" />
+                Add Task
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Create Task</DialogTitle>
+              </DialogHeader>
+              <form action={handleCreate}>
+                <TaskForm options={options} defaultValues={{ date: filters.date }} pending={pending} submitLabel="Create Task" />
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       {tasks.length === 0 ? (
@@ -121,7 +133,11 @@ export function TasksPageClient({ tasks, options, filters }: Props) {
       ) : (
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
+            <TaskCard
+              key={task.id}
+              task={task}
+              canDelete={canDeleteTask(access.role, access.userId, task)}
+            />
           ))}
         </div>
       )}

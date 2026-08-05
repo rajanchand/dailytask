@@ -68,6 +68,15 @@ export const ROLE_LABELS: Record<string, string> = {
   viewer: "Viewer",
 };
 
+/** Roles that can be assigned via Team invite / role update (excludes super_admin). */
+export const ASSIGNABLE_ROLES = [
+  "admin",
+  "manager",
+  "team_leader",
+  "member",
+  "viewer",
+] as const;
+
 export const KANBAN_COLUMNS = [
   "not_started",
   "working_on_it",

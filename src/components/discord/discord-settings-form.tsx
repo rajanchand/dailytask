@@ -96,7 +96,7 @@ export function DiscordSettingsForm({ integration }: { integration: Integration 
               id="webhookUrl"
               name="webhookUrl"
               required
-              type="password"
+              type="url"
               autoComplete="off"
               placeholder="https://discord.com/api/webhooks/..."
               defaultValue={integration?.webhookUrl ?? ""}

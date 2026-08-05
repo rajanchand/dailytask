@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ROLE_LABELS } from "@/lib/utils";
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/utils";
 
 type Props = {
   userId: string;
@@ -33,8 +33,8 @@ export function TeamMemberActions({ userId, role, disabled, updateRole, setDisab
           });
         }}
       >
-        {Object.entries(ROLE_LABELS).map(([v, l]) => (
-          <option key={v} value={v}>{l}</option>
+        {ASSIGNABLE_ROLES.map((v) => (
+          <option key={v} value={v}>{ROLE_LABELS[v]}</option>
         ))}
       </select>
       <Button
@@ -55,13 +55,14 @@ export function TeamMemberActions({ userId, role, disabled, updateRole, setDisab
         variant="destructive"
         size="sm"
         disabled={pending}
-        onClick={() =>
+        onClick={() => {
+          if (!window.confirm("Remove this member from the team?")) return;
           startTransition(async () => {
             await remove(userId);
             toast.success("Member removed");
             router.refresh();
-          })
-        }
+          });
+        }}
       >
         Remove
       </Button>

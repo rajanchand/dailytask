@@ -237,8 +237,8 @@ export function ReportsClient({ overview }: { overview: Overview }) {
           ))}
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          In Discord you can also type: <code>report</code>, <code>daily report</code>, or{" "}
-          <code>weekly report</code>
+          Requires a webhook in Discord settings. In Discord you can also type:{" "}
+          <code>report</code>, <code>daily report</code>, or <code>weekly report</code>
         </p>
       </div>
     </div>

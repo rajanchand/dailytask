@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { TaskForm } from "@/components/tasks/task-form";
+import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { StatusBadge } from "@/components/tasks/status-badge";
 import {
@@ -18,8 +19,9 @@ import {
   updateTaskStatusAction,
   assignTaskAction,
 } from "@/server/actions/tasks";
+import { canAssignTask, canDeleteTask, canUpdateTask } from "@/server/task-access";
 import { STATUS_LABELS, formatDisplayDate, cn } from "@/lib/utils";
-import type { TaskStatus } from "@/server/db/schema";
+import type { Role, TaskStatus } from "@/server/db/schema";
 
 type Task = {
   id: string;
@@ -33,6 +35,7 @@ type Task = {
   progress?: number | null;
   isOverdue?: boolean;
   assigneeId?: string | null;
+  createdById: string;
   assigneeName?: string | null;
   projectName?: string | null;
 };
@@ -43,14 +46,22 @@ type Options = {
   categories: { id: string; name: string }[];
 };
 
+type Access = {
+  userId: string;
+  role: Role;
+  canCreate: boolean;
+};
+
 export function PlannerClient({
   date,
   tasks,
   options,
+  access,
 }: {
   date: string;
   tasks: Task[];
   options: Options;
+  access: Access;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -97,27 +108,29 @@ export function PlannerClient({
           <Button variant="outline" size="icon" onClick={() => go(format(addDays(parseISO(date), 1), "yyyy-MM-dd"))}>
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4" />
-                Add Task
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Plan a task</DialogTitle>
-              </DialogHeader>
-              <form action={handleCreate}>
-                <TaskForm
-                  options={options}
-                  defaultValues={{ date }}
-                  submitLabel="Add to plan"
-                  pending={pending}
-                />
-              </form>
-            </DialogContent>
-          </Dialog>
+          {access.canCreate && (
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4" />
+                  Add Task
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Plan a task</DialogTitle>
+                </DialogHeader>
+                <form action={handleCreate}>
+                  <TaskForm
+                    options={options}
+                    defaultValues={{ date }}
+                    submitLabel="Add to plan"
+                    pending={pending}
+                  />
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
       </div>
 
@@ -149,115 +162,139 @@ export function PlannerClient({
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <p className="text-lg font-medium">No tasks planned 🎉</p>
-            <p className="text-sm text-muted-foreground">Your day is clear. Add a task to start planning.</p>
-            <Button onClick={() => setOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Create Task
-            </Button>
+            <p className="text-sm text-muted-foreground">
+              {access.canCreate
+                ? "Your day is clear. Add a task to start planning."
+                : "Your day is clear."}
+            </p>
+            {access.canCreate && (
+              <Button onClick={() => setOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Create Task
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {tasks.map((task) => (
-            <Card
-              key={task.id}
-              className={cn(
-                "overflow-hidden",
-                (task.priority === "high" || task.priority === "critical") && "priority-high",
-                task.isOverdue && "border-destructive/40",
-              )}
-            >
-              <CardContent className="grid gap-4 p-4 md:grid-cols-[1fr_220px]">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold">{task.title}</h3>
-                    <StatusBadge status={task.status} />
-                    <PriorityBadge priority={task.priority} />
-                  </div>
-                  {task.description && (
-                    <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
-                  )}
-                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    {(task.startTime || task.dueTime) && (
-                      <span>
-                        {task.startTime ?? "—"} – {task.dueTime ?? "—"}
-                      </span>
-                    )}
-                    {task.assigneeName && <span>👤 {task.assigneeName}</span>}
-                    {task.projectName && <span>📁 {task.projectName}</span>}
-                  </div>
-                  <div className="space-y-1 pt-1">
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Progress</span>
-                      <span>{task.progress ?? 0}%</span>
+          {tasks.map((task) => {
+            const canEdit = canUpdateTask(access.role, access.userId, task);
+            const canAssign = canAssignTask(access.role, access.userId, task);
+            const canDelete = canDeleteTask(access.role, access.userId, task);
+            return (
+              <Card
+                key={task.id}
+                className={cn(
+                  "overflow-hidden",
+                  (task.priority === "high" || task.priority === "critical") && "priority-high",
+                  task.isOverdue && "border-destructive/40",
+                )}
+              >
+                <CardContent className="grid gap-4 p-4 md:grid-cols-[1fr_220px]">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold">{task.title}</h3>
+                      <StatusBadge status={task.status} />
+                      <PriorityBadge priority={task.priority} />
+                      {canDelete && (
+                        <DeleteTaskButton
+                          taskId={task.id}
+                          taskTitle={task.title}
+                          variant="outline"
+                          size="sm"
+                          label="Delete"
+                        />
+                      )}
                     </div>
-                    <Progress value={task.progress ?? 0} />
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={5}
-                      defaultValue={task.progress ?? 0}
-                      className="w-full accent-[var(--primary)]"
-                      onMouseUp={(e) => {
-                        const value = Number((e.target as HTMLInputElement).value);
+                    {task.description && (
+                      <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
+                    )}
+                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      {(task.startTime || task.dueTime) && (
+                        <span>
+                          {task.startTime ?? "—"} – {task.dueTime ?? "—"}
+                        </span>
+                      )}
+                      {task.assigneeName && <span>👤 {task.assigneeName}</span>}
+                      {task.projectName && <span>📁 {task.projectName}</span>}
+                    </div>
+                    <div className="space-y-1 pt-1">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Progress</span>
+                        <span>{task.progress ?? 0}%</span>
+                      </div>
+                      <Progress value={task.progress ?? 0} />
+                      {canEdit && (
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          defaultValue={task.progress ?? 0}
+                          className="w-full accent-[var(--primary)]"
+                          onMouseUp={(e) => {
+                            const value = Number((e.target as HTMLInputElement).value);
+                            startTransition(async () => {
+                              const result = await updateTaskProgressAction(task.id, value);
+                              if (result?.error) toast.error(result.error);
+                              else router.refresh();
+                            });
+                          }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-muted-foreground">Status</label>
+                    <select
+                      className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm disabled:opacity-60"
+                      value={task.status}
+                      disabled={!canEdit}
+                      onChange={(e) => {
                         startTransition(async () => {
-                          const result = await updateTaskProgressAction(task.id, value);
+                          const result = await updateTaskStatusAction(
+                            task.id,
+                            e.target.value as TaskStatus,
+                          );
                           if (result?.error) toast.error(result.error);
                           else router.refresh();
                         });
                       }}
-                    />
+                    >
+                      {Object.entries(STATUS_LABELS).map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="text-xs font-medium text-muted-foreground">Assign to</label>
+                    <select
+                      className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm disabled:opacity-60"
+                      value={task.assigneeId ?? ""}
+                      disabled={!canAssign}
+                      onChange={(e) => {
+                        startTransition(async () => {
+                          const result = await assignTaskAction(task.id, e.target.value || null);
+                          if (result?.error) toast.error(result.error);
+                          else {
+                            toast.success("Assigned");
+                            router.refresh();
+                          }
+                        });
+                      }}
+                    >
+                      <option value="">Unassigned</option>
+                      {options.users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">Status</label>
-                  <select
-                    className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"
-                    value={task.status}
-                    onChange={(e) => {
-                      startTransition(async () => {
-                        const result = await updateTaskStatusAction(
-                          task.id,
-                          e.target.value as TaskStatus,
-                        );
-                        if (result?.error) toast.error(result.error);
-                        else router.refresh();
-                      });
-                    }}
-                  >
-                    {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="text-xs font-medium text-muted-foreground">Assign to</label>
-                  <select
-                    className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"
-                    value={task.assigneeId ?? ""}
-                    onChange={(e) => {
-                      startTransition(async () => {
-                        const result = await assignTaskAction(task.id, e.target.value || null);
-                        if (result?.error) toast.error(result.error);
-                        else {
-                          toast.success("Assigned");
-                          router.refresh();
-                        }
-                      });
-                    }}
-                  >
-                    <option value="">Unassigned</option>
-                    {options.users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

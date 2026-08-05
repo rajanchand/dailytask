@@ -386,9 +386,13 @@ export async function inviteMemberAction(formData: FormData) {
 
 export async function updateMemberRoleAction(userId: string, role: string) {
   await requireUserPermission("users.manage");
+  const parsed = inviteSchema.shape.role.safeParse(role);
+  if (!parsed.success) {
+    throw new Error("Invalid role");
+  }
   await db
     .update(users)
-    .set({ role: role as typeof users.$inferInsert.role, updatedAt: new Date() })
+    .set({ role: parsed.data, updatedAt: new Date() })
     .where(eq(users.id, userId));
   revalidatePath("/team");
 }

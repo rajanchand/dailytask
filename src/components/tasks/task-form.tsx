@@ -32,6 +32,7 @@ type TaskFormProps = {
   };
   submitLabel?: string;
   pending?: boolean;
+  onDelete?: () => void;
 };
 
 const selectClass =
@@ -42,6 +43,7 @@ export function TaskForm({
   defaultValues = {},
   submitLabel = "Save Task",
   pending,
+  onDelete,
 }: TaskFormProps) {
   return (
     <div className="grid gap-4 max-h-[70vh] overflow-y-auto pr-1">
@@ -146,9 +148,16 @@ export function TaskForm({
         <Label htmlFor="tagNames">Tags (comma-separated)</Label>
         <Input id="tagNames" name="tagNames" placeholder="design, urgent" defaultValue={defaultValues.tagNames} />
       </div>
-      <Button type="submit" disabled={pending} className={cn("w-full")}>
-        {pending ? "Saving…" : submitLabel}
-      </Button>
+      <div className="flex gap-2">
+        <Button type="submit" disabled={pending} className={cn("flex-1")}>
+          {pending ? "Saving…" : submitLabel}
+        </Button>
+        {onDelete && (
+          <Button type="button" variant="destructive" disabled={pending} onClick={onDelete}>
+            Delete
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

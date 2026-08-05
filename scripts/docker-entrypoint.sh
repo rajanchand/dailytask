@@ -1,11 +1,16 @@
 #!/bin/sh
 set -e
 
-# pnpm 11 supply-chain / minimumReleaseAge can block fresh packages in CI/prod images
-printf '%s\n' \
-  'minimumReleaseAge=0' \
-  'dangerouslyAllowAllBuilds=true' \
-  > /app/.npmrc
+# pnpm 11 supply-chain / minimumReleaseAge can block fresh packages (e.g. bullmq)
+# Prefer env + config-before-command; never rely on args after script names.
+export npm_config_minimum_release_age=0
+export PNPM_MINIMUM_RELEASE_AGE=0
+if [ -w /app ] || [ -w /app/.npmrc ] 2>/dev/null; then
+  printf '%s\n' \
+    'minimumReleaseAge=0' \
+    'dangerouslyAllowAllBuilds=true' \
+    > /app/.npmrc 2>/dev/null || true
+fi
 pnpm config set minimumReleaseAge 0 >/dev/null 2>&1 || true
 pnpm config set dangerouslyAllowAllBuilds true >/dev/null 2>&1 || true
 
@@ -42,12 +47,23 @@ do
   sleep 1
 done
 
-echo "[entrypoint] Applying schema (pnpm db:push)..."
-pnpm db:push --config.minimumReleaseAge=0
+echo "[entrypoint] Applying schema (drizzle-kit push)..."
+# Bypass pnpm script deps/supply-chain checks — binaries already in the image
+if [ -x ./node_modules/.bin/drizzle-kit ]; then
+  ./node_modules/.bin/drizzle-kit push
+elif [ -f ./node_modules/drizzle-kit/bin.cjs ]; then
+  node ./node_modules/drizzle-kit/bin.cjs push
+else
+  pnpm --config.minimumReleaseAge=0 run db:push
+fi
 
 if [ "${RUN_SEED:-false}" = "true" ]; then
   echo "[entrypoint] Seeding database..."
-  pnpm db:seed --config.minimumReleaseAge=0 || echo "[entrypoint] Seed skipped/failed (continuing)"
+  if [ -x ./node_modules/.bin/tsx ]; then
+    ./node_modules/.bin/tsx scripts/seed.ts || echo "[entrypoint] Seed skipped/failed (continuing)"
+  else
+    pnpm --config.minimumReleaseAge=0 run db:seed || echo "[entrypoint] Seed skipped/failed (continuing)"
+  fi
 fi
 
 mkdir -p "${UPLOAD_DIR:-./uploads}"

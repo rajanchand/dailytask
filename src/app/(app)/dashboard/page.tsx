@@ -8,12 +8,17 @@ import { getDashboardStats, getTasks } from "@/server/actions/tasks";
 import { EodSummaryActions } from "@/components/dashboard/eod-summary-actions";
 import { getRecentActivity } from "@/server/actions/activity";
 import { tomorrowISO, formatDisplayDate } from "@/lib/utils";
+import { canDeleteTask } from "@/server/task-access";
+import { hasPermission } from "@/server/rbac";
+import type { Role } from "@/server/db/schema";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default async function DashboardPage() {
   const stats = await getDashboardStats();
+  const role = stats.user.role as Role;
+  const canCreate = hasPermission(role, "tasks.create");
   const [tomorrowTasks, overdueTasks, activity] = await Promise.all([
     getTasks({ date: tomorrowISO(), assignedToMe: true }),
     getTasks({ overdue: true, assignedToMe: true }),
@@ -72,15 +77,22 @@ export default async function DashboardPage() {
               <CardContent className="space-y-3 py-10 text-center">
                 <p className="text-lg font-medium">No tasks today 🎉</p>
                 <p className="text-sm text-muted-foreground">You are completely clear.</p>
-                <Button asChild>
-                  <Link href="/planner">Create Task</Link>
-                </Button>
+                {canCreate && (
+                  <Button asChild>
+                    <Link href="/planner">Create Task</Link>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-3">
               {stats.tasks.slice(0, 6).map((task) => (
-                <TaskCard key={task.id} task={task} href="/planner" />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  href="/planner"
+                  canDelete={canDeleteTask(role, stats.user.id, task)}
+                />
               ))}
             </div>
           )}

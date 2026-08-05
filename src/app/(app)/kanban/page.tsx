@@ -1,7 +1,13 @@
 import { getTasks, getTaskFormOptions } from "@/server/actions/tasks";
 import { KanbanBoard } from "@/components/tasks/kanban-board";
+import { auth } from "@/server/auth";
+import type { Role } from "@/server/db/schema";
+import { redirect } from "next/navigation";
 
 export default async function KanbanPage() {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
   const [tasks, options] = await Promise.all([getTasks({}), getTaskFormOptions()]);
 
   return (
@@ -12,7 +18,14 @@ export default async function KanbanPage() {
           Drag to change status, assign teammates, and update progress.
         </p>
       </div>
-      <KanbanBoard initialTasks={tasks} users={options.users} />
+      <KanbanBoard
+        initialTasks={tasks}
+        users={options.users}
+        access={{
+          userId: session.user.id,
+          role: session.user.role as Role,
+        }}
+      />
     </div>
   );
 }
