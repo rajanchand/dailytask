@@ -199,8 +199,10 @@ async function loadUserDayTasks(userId: string, today: string) {
     .where(and(eq(tasks.assigneeId, userId), eq(tasks.date, today)));
 }
 
+const FORCE_RUN = process.argv.includes("--force");
+
 async function morningReminderJob() {
-  logger.info("worker.job.start", { job: "morning-reminder" });
+  logger.info("worker.job.start", { job: "morning-reminder", force: FORCE_RUN });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -208,7 +210,7 @@ async function morningReminderJob() {
     if (user.notificationPrefs?.morningReminder === false) continue;
 
     const tz = user.timezone?.trim() || "UTC";
-    if (!isLocalMorningReportWindow(now, tz)) continue;
+    if (!FORCE_RUN && !isLocalMorningReportWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
     await ensureDailyTasksForToday(user.id, today);
@@ -459,7 +461,7 @@ async function overdueMarkJob() {
 }
 
 async function eodSummaryJob() {
-  logger.info("worker.job.start", { job: "eod-summary" });
+  logger.info("worker.job.start", { job: "eod-summary", force: FORCE_RUN });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -467,7 +469,7 @@ async function eodSummaryJob() {
     if (user.notificationPrefs?.dailySummary === false) continue;
 
     const tz = user.timezone?.trim() || "UTC";
-    if (!isLocalEodWindow(now, tz)) continue;
+    if (!FORCE_RUN && !isLocalEodWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
     const dayTasks = await loadUserDayTasks(user.id, today);
