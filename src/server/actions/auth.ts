@@ -10,7 +10,7 @@ import { users, teamMembers, teams, type Role } from "@/server/db/schema";
 import { signIn, signOut, auth } from "@/server/auth";
 import { newId } from "@/lib/utils";
 import { requireSession, requireUserPermission } from "@/server/session";
-import { isSuperAdmin } from "@/server/rbac";
+import { assertCanAssignRole, isSuperAdmin } from "@/server/rbac";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { rateLimitAction } from "@/server/security/rate-limit";
@@ -76,10 +76,19 @@ const registerSchema = z.object({
   password: z.string().min(8).max(128),
 });
 
+const assignableRoleSchema = z.enum([
+  "super_admin",
+  "admin",
+  "manager",
+  "team_leader",
+  "member",
+  "viewer",
+]);
+
 const inviteSchema = z.object({
   name: z.string().min(2).max(120),
   email: z.string().email().max(254),
-  role: z.enum(["admin", "manager", "team_leader", "member", "viewer"]),
+  role: assignableRoleSchema,
 });
 
 function generateTempPassword() {
@@ -415,7 +424,7 @@ export async function getCurrentUser() {
 }
 
 export async function inviteMemberAction(formData: FormData) {
-  await requireUserPermission("users.manage");
+  const session = await requireUserPermission("users.manage");
 
   const limited = await rateLimitAction("invite", 8, 60 * 15);
   if (!limited.ok) return { error: "Too many invites. Try again later." };
@@ -430,6 +439,14 @@ export async function inviteMemberAction(formData: FormData) {
   const name = parsed.data.name.trim();
   const email = parsed.data.email.toLowerCase().trim();
   const role = parsed.data.role;
+
+  try {
+    assertCanAssignRole(session.user.role as Role, role);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Forbidden",
+    };
+  }
 
   const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (existing.length) return { error: "User already exists" };
@@ -478,11 +495,13 @@ export async function inviteMemberAction(formData: FormData) {
 
 export async function updateMemberRoleAction(userId: string, role: string) {
   const session = await requireUserPermission("users.manage");
-  await assertCanManageTargetUser(session.user.role as Role, userId);
-  const parsed = inviteSchema.shape.role.safeParse(role);
+  const actorRole = session.user.role as Role;
+  await assertCanManageTargetUser(actorRole, userId);
+  const parsed = assignableRoleSchema.safeParse(role);
   if (!parsed.success) {
     throw new Error("Invalid role");
   }
+  assertCanAssignRole(actorRole, parsed.data);
   await db
     .update(users)
     .set({ role: parsed.data, updatedAt: new Date() })

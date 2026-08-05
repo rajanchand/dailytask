@@ -85,6 +85,21 @@ export function isSuperAdmin(role: Role | string | undefined | null) {
   return role === "super_admin";
 }
 
+/** Only super_admin may create/invite/assign the super_admin role. */
+export function canAssignRole(
+  actorRole: Role | string | undefined | null,
+  targetRole: string,
+) {
+  if (targetRole === "super_admin") return isSuperAdmin(actorRole);
+  return true;
+}
+
+export function assertCanAssignRole(actorRole: Role, targetRole: string) {
+  if (!canAssignRole(actorRole, targetRole)) {
+    throw new Error("Only super admins can assign the super_admin role");
+  }
+}
+
 export function requirePermission(role: Role, permission: Permission) {
   if (!hasPermission(role, permission)) {
     throw new Error("Forbidden");

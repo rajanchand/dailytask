@@ -24,7 +24,7 @@ export default async function TeamPage() {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      {canManage && <InviteMemberForm />}
+      {canManage && <InviteMemberForm actorRole={actorRole} />}
 
       <Card>
         <CardHeader>
@@ -63,6 +63,7 @@ export default async function TeamPage() {
                         userId={member.id}
                         role={member.role}
                         disabled={member.disabled}
+                        actorRole={actorRole}
                         updateRole={updateMemberRoleAction}
                         setDisabled={setMemberDisabledAction}
                         remove={removeMemberAction}

@@ -7,9 +7,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/utils";
+import { getAssignableRoles, ROLE_LABELS } from "@/lib/utils";
 
-export function InviteMemberForm() {
+type Props = {
+  actorRole?: string | null;
+};
+
+export function InviteMemberForm({ actorRole }: Props) {
+  const roles = getAssignableRoles(actorRole);
   const [, action, pending] = useActionState(async (_prev: unknown, formData: FormData) => {
     const result = await inviteMemberAction(formData);
     if (result?.error) toast.error(result.error);
@@ -39,7 +44,7 @@ export function InviteMemberForm() {
           <div className="grid gap-2">
             <Label htmlFor="role">Role</Label>
             <select id="role" name="role" className="h-10 rounded-lg border border-border bg-card px-3 text-sm" defaultValue="member">
-              {ASSIGNABLE_ROLES.map((v) => (
+              {roles.map((v) => (
                 <option key={v} value={v}>{ROLE_LABELS[v]}</option>
               ))}
             </select>

@@ -4,12 +4,13 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/utils";
+import { getAssignableRoles, ROLE_LABELS } from "@/lib/utils";
 
 type Props = {
   userId: string;
   role: string;
   disabled: boolean;
+  actorRole?: string | null;
   updateRole: (userId: string, role: string) => Promise<void>;
   setDisabled: (userId: string, disabled: boolean) => Promise<void>;
   remove: (userId: string) => Promise<void>;
@@ -22,6 +23,7 @@ export function TeamMemberActions({
   userId,
   role,
   disabled,
+  actorRole,
   updateRole,
   setDisabled,
   remove,
@@ -29,6 +31,7 @@ export function TeamMemberActions({
 }: Props) {
   const [pending, startTransition] = useTransition();
   const router = useRouter();
+  const roles = getAssignableRoles(actorRole);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -38,13 +41,18 @@ export function TeamMemberActions({
         className="h-8 rounded-md border border-border bg-card px-2 text-xs"
         onChange={(e) => {
           startTransition(async () => {
-            await updateRole(userId, e.target.value);
-            toast.success("Role updated");
-            router.refresh();
+            try {
+              await updateRole(userId, e.target.value);
+              toast.success("Role updated");
+              router.refresh();
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Failed to update role");
+              router.refresh();
+            }
           });
         }}
       >
-        {ASSIGNABLE_ROLES.map((v) => (
+        {roles.map((v) => (
           <option key={v} value={v}>
             {ROLE_LABELS[v]}
           </option>

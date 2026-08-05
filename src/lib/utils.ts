@@ -68,7 +68,16 @@ export const ROLE_LABELS: Record<string, string> = {
   viewer: "Viewer",
 };
 
-/** Roles that can be assigned via Team invite / role update (excludes super_admin). */
+export const ALL_ROLES = [
+  "super_admin",
+  "admin",
+  "manager",
+  "team_leader",
+  "member",
+  "viewer",
+] as const;
+
+/** Roles assignable by admins (excludes super_admin). */
 export const ASSIGNABLE_ROLES = [
   "admin",
   "manager",
@@ -76,6 +85,12 @@ export const ASSIGNABLE_ROLES = [
   "member",
   "viewer",
 ] as const;
+
+/** Roles the actor may assign. Only super_admin may assign super_admin. */
+export function getAssignableRoles(actorRole: string | null | undefined) {
+  if (actorRole === "super_admin") return ALL_ROLES;
+  return ASSIGNABLE_ROLES;
+}
 
 export const KANBAN_COLUMNS = [
   "not_started",

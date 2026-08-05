@@ -17,6 +17,7 @@ import {
   type Role,
 } from "@/server/db/schema";
 import { requireSuperAdmin } from "@/server/session";
+import { assertCanAssignRole } from "@/server/rbac";
 import { requireSystemHealthGate } from "@/server/system-health-gate";
 import { getAppUrl, sendPasswordResetEmail } from "@/server/services/mail";
 import { logActivity } from "@/server/services/activity";
@@ -250,6 +251,15 @@ export async function updateDatabaseUserAction(input: unknown) {
     if (!parsed.success) return { error: "Invalid user data" };
 
     const data = parsed.data;
+    const actorRole = session.user.role as Role;
+    try {
+      assertCanAssignRole(actorRole, data.role);
+    } catch (err) {
+      return {
+        error: err instanceof Error ? err.message : "Forbidden",
+      };
+    }
+
     const [existing] = await db
       .select({ id: users.id, role: users.role, email: users.email })
       .from(users)
