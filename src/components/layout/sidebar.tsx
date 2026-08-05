@@ -50,7 +50,14 @@ const secondaryNav: NavItem[] = [
   { href: "/team", label: "Team", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3, permission: "analytics.view" },
   { href: "/notifications", label: "Alerts", icon: Bell },
-  { href: "/discord", label: "Discord", icon: MessageSquare, permission: "discord.manage" },
+  {
+    href: "/discord",
+    label: "Discord",
+    icon: MessageSquare,
+    permission: "discord.manage",
+    superAdminOnly: true,
+  },
+
   { href: "/activity", label: "Activity", icon: Activity, permission: "audit.view" },
   {
     href: "/system-health",

@@ -1,5 +1,5 @@
 import { auth } from "@/server/auth";
-import { hasPermission } from "@/server/rbac";
+import { isSuperAdmin } from "@/server/rbac";
 import type { Role } from "@/server/db/schema";
 import { AccessDenied } from "@/components/access-denied";
 import { getDiscordIntegration } from "@/server/actions/discord";
@@ -7,8 +7,8 @@ import { DiscordSettingsForm } from "@/components/discord/discord-settings-form"
 
 export default async function DiscordPage() {
   const session = await auth();
-  if (!session?.user || !hasPermission(session.user.role as Role, "discord.manage")) {
-    return <AccessDenied title="Discord settings require admin access" />;
+  if (!session?.user || !isSuperAdmin(session.user.role as Role)) {
+    return <AccessDenied title="Discord settings require super admin access" />;
   }
 
   const integration = await getDiscordIntegration();

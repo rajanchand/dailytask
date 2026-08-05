@@ -37,7 +37,6 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "users.manage",
     "teams.manage",
     "settings.manage",
-    "discord.manage",
     "tasks.create",
     "tasks.assign",
     "tasks.manage_all",

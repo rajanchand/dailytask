@@ -5,12 +5,12 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/server/db";
 import { discordIntegrations, teams } from "@/server/db/schema";
 import { newId } from "@/lib/utils";
-import { requireUserPermission } from "@/server/session";
+import { requireSuperAdmin } from "@/server/session";
 import { logActivity } from "@/server/services/activity";
 import { testDiscordWebhook } from "@/server/services/discord";
 
 export async function getDiscordIntegration() {
-  await requireUserPermission("discord.manage");
+  await requireSuperAdmin();
   const [team] = await db.select().from(teams).limit(1);
   if (!team) return null;
 
@@ -26,7 +26,7 @@ export async function getDiscordIntegration() {
 }
 
 export async function saveDiscordIntegrationAction(formData: FormData) {
-  const session = await requireUserPermission("discord.manage");
+  const session = await requireSuperAdmin();
   const teamId = String(formData.get("teamId") ?? "");
   const webhookUrl = String(formData.get("webhookUrl") ?? "").trim();
   const serverName = String(formData.get("serverName") ?? "") || null;
@@ -90,7 +90,7 @@ export async function saveDiscordIntegrationAction(formData: FormData) {
 }
 
 export async function testDiscordIntegrationAction() {
-  await requireUserPermission("discord.manage");
+  await requireSuperAdmin();
   const [team] = await db.select().from(teams).limit(1);
   if (!team) return { error: "No team found" };
 
