@@ -3,6 +3,7 @@ import {
   updateMemberRoleAction,
   setMemberDisabledAction,
   removeMemberAction,
+  adminResetMemberPasswordAction,
 } from "@/server/actions/auth";
 import { auth } from "@/server/auth";
 import { hasPermission, isSuperAdmin } from "@/server/rbac";
@@ -65,6 +66,7 @@ export default async function TeamPage() {
                         updateRole={updateMemberRoleAction}
                         setDisabled={setMemberDisabledAction}
                         remove={removeMemberAction}
+                        resetPassword={adminResetMemberPasswordAction}
                       />
                     )}
                   </div>

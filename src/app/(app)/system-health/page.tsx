@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { auth } from "@/server/auth";
 import { isSuperAdmin } from "@/server/rbac";
@@ -16,6 +17,7 @@ import {
 } from "@/components/system-health/system-health-gate-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ROLE_LABELS } from "@/lib/utils";
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
@@ -159,8 +161,28 @@ export default async function SystemHealthPage() {
             minutes.
           </p>
         </div>
-        <SystemHealthLockButton />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/system-health/database">Open database</Link>
+          </Button>
+          <SystemHealthLockButton />
+        </div>
       </div>
+
+      <Card className="border-primary/20 bg-primary/[0.03]">
+        <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle>Database console</CardTitle>
+            <CardDescription>
+              View and manage users (edit, block, reset password, delete) plus team membership and
+              recent login sessions. Structured admin actions only — no raw SQL.
+            </CardDescription>
+          </div>
+          <Button asChild>
+            <Link href="/system-health/database">Open database</Link>
+          </Button>
+        </CardHeader>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

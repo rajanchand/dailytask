@@ -13,14 +13,25 @@ type Props = {
   updateRole: (userId: string, role: string) => Promise<void>;
   setDisabled: (userId: string, disabled: boolean) => Promise<void>;
   remove: (userId: string) => Promise<void>;
+  resetPassword: (
+    userId: string,
+  ) => Promise<{ ok?: true; message?: string; error?: string; resetUrl?: string }>;
 };
 
-export function TeamMemberActions({ userId, role, disabled, updateRole, setDisabled, remove }: Props) {
+export function TeamMemberActions({
+  userId,
+  role,
+  disabled,
+  updateRole,
+  setDisabled,
+  remove,
+  resetPassword,
+}: Props) {
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <select
         defaultValue={role}
         disabled={pending}
@@ -34,7 +45,9 @@ export function TeamMemberActions({ userId, role, disabled, updateRole, setDisab
         }}
       >
         {ASSIGNABLE_ROLES.map((v) => (
-          <option key={v} value={v}>{ROLE_LABELS[v]}</option>
+          <option key={v} value={v}>
+            {ROLE_LABELS[v]}
+          </option>
         ))}
       </select>
       <Button
@@ -50,6 +63,33 @@ export function TeamMemberActions({ userId, role, disabled, updateRole, setDisab
         }
       >
         {disabled ? "Enable" : "Disable"}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={pending || disabled}
+        onClick={() => {
+          if (
+            !window.confirm(
+              "Send a password reset email to this member’s registered email address?",
+            )
+          ) {
+            return;
+          }
+          startTransition(async () => {
+            const result = await resetPassword(userId);
+            if (result?.error) {
+              toast.error(result.error);
+              return;
+            }
+            toast.success(result?.message || "Password reset email sent");
+            if (result?.resetUrl) {
+              toast.message(`Dev reset link: ${result.resetUrl}`);
+            }
+          });
+        }}
+      >
+        Reset password
       </Button>
       <Button
         variant="destructive"

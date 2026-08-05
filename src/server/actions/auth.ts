@@ -504,3 +504,83 @@ export async function removeMemberAction(userId: string) {
   await db.update(users).set({ disabled: true, updatedAt: new Date() }).where(eq(users.id, userId));
   revalidatePath("/team");
 }
+
+/**
+ * Admin / super_admin: send a password-reset email to a team member's registered email.
+ * Reuses the same token + mail template as forgot-password.
+ */
+export async function adminResetMemberPasswordAction(userId: string) {
+  const session = await requireUserPermission("users.manage");
+
+  const limited = await rateLimitAction("admin-reset-password", 15, 60 * 15, session.user.id);
+  if (!limited.ok) {
+    return { error: "Too many reset attempts. Try again later." };
+  }
+
+  if (!userId) return { error: "User not found" };
+  if (userId === session.user.id) {
+    return { error: "Use Settings to change your own password, or Forgot password on the login page." };
+  }
+
+  await assertCanManageTargetUser(session.user.role as Role, userId);
+
+  const [target] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      disabled: users.disabled,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!target) {
+    return { error: "No account found for that member." };
+  }
+
+  if (target.disabled) {
+    return { error: "Cannot reset password for a disabled account. Enable them first." };
+  }
+
+  const token = randomBytes(32).toString("hex");
+  await db
+    .update(users)
+    .set({
+      resetToken: token,
+      resetTokenExpires: new Date(Date.now() + 1000 * 60 * 60),
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, target.id));
+
+  const resetUrl = `${getAppUrl()}/reset-password?token=${token}`;
+
+  try {
+    await sendPasswordResetEmail({
+      to: target.email,
+      name: target.name,
+      resetUrl,
+    });
+  } catch (err) {
+    console.error("Admin team password reset email failed", err);
+    if (process.env.NODE_ENV === "development") {
+      return {
+        ok: true as const,
+        message: "Email not configured — use this reset link (dev).",
+        resetUrl: `/reset-password?token=${token}`,
+      };
+    }
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : "Could not send reset email. Check SMTP settings.",
+    };
+  }
+
+  revalidatePath("/team");
+  return {
+    ok: true as const,
+    message: `Password reset email sent to ${target.email}`,
+  };
+}
