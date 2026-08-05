@@ -26,6 +26,15 @@ export async function getProjectById(projectId: string) {
   return project ?? null;
 }
 
+export async function getProjects() {
+  await requireSession();
+  return db
+    .select()
+    .from(projects)
+    .where(eq(projects.archived, false))
+    .orderBy(projects.name);
+}
+
 export async function getProjectStats() {
   await requireSession();
   const allProjects = await getProjects();
