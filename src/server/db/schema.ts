@@ -358,6 +358,23 @@ export const dailySummaries = pgTable(
   (t) => [uniqueIndex("daily_summary_user_date").on(t.userId, t.date)],
 );
 
+/**
+ * Singleton ops credentials for System Health unlock (separate from app login).
+ * Password + memorable PIN are bcrypt-hashed; never store plaintext.
+ */
+export const systemHealthCredentials = pgTable("system_health_credentials", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  pinHash: text("pin_hash").notNull(),
+  failedCount: integer("failed_count").notNull().default(0),
+  locked: boolean("locked").notNull().default(false),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const usersRelations = relations(users, ({ many }) => ({
   tasksAssigned: many(tasks, { relationName: "assignee" }),
   tasksCreated: many(tasks, { relationName: "creator" }),

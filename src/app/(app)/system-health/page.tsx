@@ -5,11 +5,13 @@ import type { Role } from "@/server/db/schema";
 import { AccessDenied } from "@/components/access-denied";
 import { getSystemHealthAction } from "@/server/actions/system-health";
 import {
-  isSystemHealthGateConfigured,
-  readSystemHealthGate,
+  getSystemHealthGateStatus,
+  isSystemHealthGateSecretReady,
 } from "@/server/system-health-gate";
 import {
+  SystemHealthBlockedPanel,
   SystemHealthLockButton,
+  SystemHealthSetupForm,
   SystemHealthUnlockForm,
 } from "@/components/system-health/system-health-gate-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,29 +63,57 @@ export default async function SystemHealthPage() {
     return <AccessDenied title="Super Admin access required" />;
   }
 
-  if (!isSystemHealthGateConfigured()) {
+  if (!isSystemHealthGateSecretReady()) {
     return (
       <div className="space-y-4 animate-fade-up">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Ops gate is not configured on this server.
+            Ops gate cannot start — signing secret missing.
           </p>
         </div>
         <Card>
           <CardContent className="py-6 text-sm text-muted-foreground">
-            Set <code className="text-foreground">SYSTEM_HEALTH_EMAIL</code> and{" "}
-            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD_HASH</code> (or{" "}
-            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD</code>) in the environment,
-            then restart the app.
+            Set <code className="text-foreground">AUTH_SECRET</code> (or optional{" "}
+            <code className="text-foreground">SYSTEM_HEALTH_SECRET</code>) on the server, then
+            restart the app.
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  const gate = await readSystemHealthGate();
-  if (!gate.unlocked) {
+  const gateStatus = await getSystemHealthGateStatus();
+
+  if (!gateStatus.hasCredentials && !gateStatus.envFallbackAvailable) {
+    return (
+      <div className="space-y-6 animate-fade-up">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            First-time setup — create dedicated ops credentials stored securely in the database.
+          </p>
+        </div>
+        <SystemHealthSetupForm />
+      </div>
+    );
+  }
+
+  if (gateStatus.locked) {
+    return (
+      <div className="space-y-6 animate-fade-up">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Access is locked after repeated failed unlock attempts.
+          </p>
+        </div>
+        <SystemHealthBlockedPanel />
+      </div>
+    );
+  }
+
+  if (!gateStatus.unlocked) {
     return (
       <div className="space-y-6 animate-fade-up">
         <div>
@@ -91,9 +121,17 @@ export default async function SystemHealthPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Additional credentials required — this view exposes sensitive session and database
             telemetry.
+            {gateStatus.envFallbackAvailable
+              ? " (Legacy env gate — complete in-app setup when ready to move credentials to the database.)"
+              : null}
           </p>
         </div>
         <SystemHealthUnlockForm />
+        {!gateStatus.hasCredentials && gateStatus.envFallbackAvailable ? (
+          <div className="mx-auto max-w-md">
+            <SystemHealthSetupForm />
+          </div>
+        ) : null}
       </div>
     );
   }

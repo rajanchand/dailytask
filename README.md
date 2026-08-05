@@ -73,8 +73,9 @@ SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
-SYSTEM_HEALTH_EMAIL=
-SYSTEM_HEALTH_PASSWORD_HASH=
+# System Health: prefer first-time setup at /system-health (DB-backed).
+# Optional cookie HMAC (defaults to AUTH_SECRET):
+SYSTEM_HEALTH_SECRET=
 # optional
 DISCORD_BOT_TOKEN=
 POSTGRES_PASSWORD=<strong-password>
@@ -132,13 +133,21 @@ Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other secur
 
 `GET /api/health` → `{ "status": "ok", "app": "Daily Task Managing System", "timestamp": "..." }`
 
-Super Admin System Health UI: `/system-health` (role `super_admin`, then a separate ops unlock).
+Super Admin System Health UI: `/system-health` (role `super_admin` only in nav; then a separate ops unlock).
 JSON: `GET /api/admin/system-health` (session + super_admin + unlocked ops cookie).
 
-System Health is gated: after signing in as super admin, open `/system-health` and enter
-`SYSTEM_HEALTH_EMAIL` + the ops password whose bcrypt hash is `SYSTEM_HEALTH_PASSWORD_HASH`
-(or plaintext `SYSTEM_HEALTH_PASSWORD` if you must). A short-lived httpOnly cookie unlocks
-diagnostics (DB metrics, login sessions with IP/UA/logout).
+System Health is gated in the database (`system_health_credentials`):
+1. First visit with no DB credentials → setup form (ops email, password, 6-digit memorable PIN; bcrypt-hashed).
+2. Later visits → unlock with email + System Health password; after password failure you can use the PIN.
+3. After 5 failed unlock attempts (password and/or PIN) the row is `locked`; unlock is refused until a super admin uses **Unblock System Health** (normal app session, no ops password) or runs SQL below.
+4. Success sets a short-lived httpOnly cookie (`df_sys_health`, 30m) for diagnostics (DB metrics, login sessions with IP/UA/logout).
+
+Manual unblock in Postgres:
+
+```sql
+UPDATE system_health_credentials
+SET locked = false, locked_at = NULL, failed_count = 0, updated_at = NOW();
+```
 
 ### 5. Production DB inspection (Docker Postgres)
 
@@ -156,6 +165,9 @@ Useful SQL inside `psql`:
 SELECT id, name, email, role, disabled, created_at FROM users;
 SELECT id, name FROM teams;
 SELECT id, title, status, date, assignee_id FROM tasks ORDER BY created_at DESC LIMIT 50;
+-- Unblock System Health after lockout:
+UPDATE system_health_credentials
+SET locked = false, locked_at = NULL, failed_count = 0, updated_at = NOW();
 ```
 
 Host / container checks:
@@ -244,6 +256,6 @@ pm2 save
 - Rate limits (login/register/forgot/invite/profile/change-password/Discord/PDF/avatar/task-delete) use Redis when `REDIS_URL` is set
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
 - User queries never return `passwordHash` to the client (team list, settings, system health)
-- System Health (`/system-health`) requires `super_admin` **plus** a separate ops email/password gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
-- Configure `SYSTEM_HEALTH_EMAIL` / `SYSTEM_HEALTH_PASSWORD_HASH` (preferred) on the server only — never commit real values
+- System Health (`/system-health`) is visible/usable only to `super_admin`, plus a separate DB-backed ops email/password/PIN gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
+- Ops credentials are stored hashed in `system_health_credentials`; lockouts require super-admin unblock or SQL — never commit real secrets
 - `.env.example` is a public empty template; real credentials go only in gitignored `.env`
