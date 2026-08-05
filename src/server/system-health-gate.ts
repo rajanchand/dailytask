@@ -7,8 +7,12 @@ import { systemHealthCredentials } from "@/server/db/schema";
 import { newId } from "@/lib/utils";
 
 export const SYSTEM_HEALTH_COOKIE = "df_sys_health";
+/** Separate short-lived cookie for database console access. */
+export const SYSTEM_HEALTH_DB_COOKIE = "df_sys_health_db";
 /** Short-lived ops unlock (30 minutes). */
 export const SYSTEM_HEALTH_TTL_SEC = 60 * 30;
+/** Database console re-auth window (10 minutes). */
+export const SYSTEM_HEALTH_DB_TTL_SEC = 60 * 10;
 export const SYSTEM_HEALTH_MAX_FAILURES = 5;
 export const SYSTEM_HEALTH_BCRYPT_ROUNDS = 12;
 
@@ -16,6 +20,8 @@ type GatePayload = {
   email: string;
   exp: number;
   iat: number;
+  /** Present on DB console tokens only. */
+  scope?: "db";
 };
 
 export type SystemHealthCredentialsRow = typeof systemHealthCredentials.$inferSelect;
@@ -25,6 +31,8 @@ export type SystemHealthGateStatus = {
   hasCredentials: boolean;
   locked: boolean;
   unlocked: boolean;
+  /** Ops unlocked + valid database console cookie. */
+  dbUnlocked: boolean;
   failedCount: number;
   /** Optional legacy env bootstrap when DB has no row yet. */
   envFallbackAvailable: boolean;
@@ -73,10 +81,14 @@ export async function getSystemHealthGateStatus(): Promise<SystemHealthGateStatu
 
   if (creds) {
     const gate = await readSystemHealthGateForEmail(creds.email, creds.locked);
+    const dbGate = gate.unlocked
+      ? await readSystemHealthDbGateForEmail(creds.email, creds.locked)
+      : { unlocked: false as const };
     return {
       hasCredentials: true,
       locked: creds.locked,
       unlocked: gate.unlocked,
+      dbUnlocked: dbGate.unlocked,
       failedCount: creds.failedCount,
       envFallbackAvailable: false,
       source: "database",
@@ -86,10 +98,14 @@ export async function getSystemHealthGateStatus(): Promise<SystemHealthGateStatu
   if (envFallbackAvailable) {
     const email = getConfiguredSystemHealthEmail();
     const gate = await readSystemHealthGateForEmail(email, false);
+    const dbGate = gate.unlocked
+      ? await readSystemHealthDbGateForEmail(email, false)
+      : { unlocked: false as const };
     return {
       hasCredentials: false,
       locked: false,
       unlocked: gate.unlocked,
+      dbUnlocked: dbGate.unlocked,
       failedCount: 0,
       envFallbackAvailable: true,
       source: "env",
@@ -100,6 +116,7 @@ export async function getSystemHealthGateStatus(): Promise<SystemHealthGateStatu
     hasCredentials: false,
     locked: false,
     unlocked: false,
+    dbUnlocked: false,
     failedCount: 0,
     envFallbackAvailable: false,
     source: "none",
@@ -114,7 +131,11 @@ function signPayload(payload: GatePayload) {
   return `${body}.${sig}`;
 }
 
-function verifyToken(token: string, expectedEmail: string): GatePayload | null {
+function verifyToken(
+  token: string,
+  expectedEmail: string,
+  options?: { requireDbScope?: boolean },
+): GatePayload | null {
   const secret = getGateSecret();
   if (!secret || !token.includes(".")) return null;
   const [body, sig] = token.split(".");
@@ -130,6 +151,12 @@ function verifyToken(token: string, expectedEmail: string): GatePayload | null {
     if (!payload?.email || typeof payload.exp !== "number") return null;
     if (payload.exp * 1000 < Date.now()) return null;
     if (!expectedEmail || payload.email.toLowerCase() !== expectedEmail.toLowerCase()) return null;
+    if (options?.requireDbScope) {
+      if (payload.scope !== "db") return null;
+    } else if (payload.scope === "db") {
+      // Ops unlock cookie must not be a DB-scoped token.
+      return null;
+    }
     return payload;
   } catch {
     return null;
@@ -174,6 +201,16 @@ export function createSystemHealthToken(email: string) {
   });
 }
 
+export function createSystemHealthDbToken(email: string) {
+  const now = Math.floor(Date.now() / 1000);
+  return signPayload({
+    email: email.toLowerCase().trim(),
+    iat: now,
+    exp: now + SYSTEM_HEALTH_DB_TTL_SEC,
+    scope: "db",
+  });
+}
+
 async function readSystemHealthGateForEmail(email: string, locked: boolean) {
   if (!email || !getGateSecret() || locked) {
     return { unlocked: false as const };
@@ -182,6 +219,18 @@ async function readSystemHealthGateForEmail(email: string, locked: boolean) {
   const token = jar.get(SYSTEM_HEALTH_COOKIE)?.value;
   if (!token) return { unlocked: false as const };
   const payload = verifyToken(token, email);
+  if (!payload) return { unlocked: false as const };
+  return { unlocked: true as const, email: payload.email };
+}
+
+async function readSystemHealthDbGateForEmail(email: string, locked: boolean) {
+  if (!email || !getGateSecret() || locked) {
+    return { unlocked: false as const };
+  }
+  const jar = await cookies();
+  const token = jar.get(SYSTEM_HEALTH_DB_COOKIE)?.value;
+  if (!token) return { unlocked: false as const };
+  const payload = verifyToken(token, email, { requireDbScope: true });
   if (!payload) return { unlocked: false as const };
   return { unlocked: true as const, email: payload.email };
 }
@@ -197,6 +246,21 @@ export async function readSystemHealthGate(): Promise<{ unlocked: boolean; email
   return { unlocked: false };
 }
 
+export async function readSystemHealthDbGate(): Promise<{ unlocked: boolean; email?: string }> {
+  const ops = await readSystemHealthGate();
+  if (!ops.unlocked || !ops.email) {
+    return { unlocked: false };
+  }
+  const creds = await getSystemHealthCredentials();
+  if (creds) {
+    return readSystemHealthDbGateForEmail(creds.email, creds.locked);
+  }
+  if (isEnvSystemHealthGateConfigured()) {
+    return readSystemHealthDbGateForEmail(getConfiguredSystemHealthEmail(), false);
+  }
+  return { unlocked: false };
+}
+
 export async function setSystemHealthCookie(token: string) {
   const jar = await cookies();
   jar.set(SYSTEM_HEALTH_COOKIE, token, {
@@ -208,9 +272,27 @@ export async function setSystemHealthCookie(token: string) {
   });
 }
 
+export async function setSystemHealthDbCookie(token: string) {
+  const jar = await cookies();
+  jar.set(SYSTEM_HEALTH_DB_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SYSTEM_HEALTH_DB_TTL_SEC,
+  });
+}
+
+export async function clearSystemHealthDbCookie() {
+  const jar = await cookies();
+  jar.delete(SYSTEM_HEALTH_DB_COOKIE);
+}
+
+/** Clears ops unlock and database console cookies. */
 export async function clearSystemHealthCookie() {
   const jar = await cookies();
   jar.delete(SYSTEM_HEALTH_COOKIE);
+  jar.delete(SYSTEM_HEALTH_DB_COOKIE);
 }
 
 export async function createSystemHealthCredentials(input: {
@@ -301,4 +383,16 @@ export async function requireSystemHealthGate() {
     throw new Error("SystemHealthLocked");
   }
   return gate;
+}
+
+/**
+ * Require ops unlock + a separate short-lived database console cookie.
+ */
+export async function requireSystemHealthDbGate() {
+  await requireSystemHealthGate();
+  const dbGate = await readSystemHealthDbGate();
+  if (!dbGate.unlocked) {
+    throw new Error("SystemHealthDbLocked");
+  }
+  return dbGate;
 }

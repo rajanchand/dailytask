@@ -174,8 +174,8 @@ export default async function SystemHealthPage() {
           <div>
             <CardTitle>Database console</CardTitle>
             <CardDescription>
-              View and manage users (edit, block, reset password, delete) plus team membership and
-              recent login sessions. Structured admin actions only — no raw SQL.
+              Requires a second password or memorable-code check after ops unlock. Structured admin
+              actions only — no raw SQL.
             </CardDescription>
           </div>
           <Button asChild>

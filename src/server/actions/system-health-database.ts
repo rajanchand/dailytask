@@ -18,7 +18,7 @@ import {
 } from "@/server/db/schema";
 import { requireSuperAdmin } from "@/server/session";
 import { assertCanAssignRole } from "@/server/rbac";
-import { requireSystemHealthGate } from "@/server/system-health-gate";
+import { requireSystemHealthDbGate } from "@/server/system-health-gate";
 import { getAppUrl, sendPasswordResetEmail } from "@/server/services/mail";
 import { logActivity } from "@/server/services/activity";
 import { rateLimitAction } from "@/server/security/rate-limit";
@@ -64,7 +64,7 @@ const updateUserSchema = z.object({
 
 async function requireDbConsole() {
   const session = await requireSuperAdmin();
-  await requireSystemHealthGate();
+  await requireSystemHealthDbGate();
   return session;
 }
 

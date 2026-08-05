@@ -7,14 +7,17 @@ import { rateLimitAction } from "@/server/security/rate-limit";
 import {
   clearSystemHealthCookie,
   createSystemHealthCredentials,
+  createSystemHealthDbToken,
   createSystemHealthToken,
   getConfiguredSystemHealthEmail,
   getSystemHealthCredentials,
   isEnvSystemHealthGateConfigured,
   isSystemHealthGateSecretReady,
+  readSystemHealthGate,
   recordUnlockFailure,
   resetUnlockFailures,
   setSystemHealthCookie,
+  setSystemHealthDbCookie,
   unblockSystemHealthCredentials,
   verifyDbPassword,
   verifyDbPin,
@@ -140,6 +143,7 @@ export async function unlockSystemHealthAction(formData: FormData) {
       if (result.locked) {
         await clearSystemHealthCookie();
         revalidatePath("/system-health");
+        revalidatePath("/system-health/database");
         return {
           error: "System Health access is blocked after too many failed attempts.",
           locked: true as const,
@@ -214,6 +218,7 @@ export async function unlockSystemHealthWithPinAction(formData: FormData) {
     if (result.locked) {
       await clearSystemHealthCookie();
       revalidatePath("/system-health");
+      revalidatePath("/system-health/database");
       return {
         error: "System Health access is blocked after too many failed attempts.",
         locked: true as const,
@@ -258,5 +263,154 @@ export async function lockSystemHealthAction() {
   await requireSuperAdmin();
   await clearSystemHealthCookie();
   revalidatePath("/system-health");
+  revalidatePath("/system-health/database");
+  return { ok: true as const };
+}
+
+/**
+ * Re-authenticate with ops password to open the database console.
+ * Requires an already-valid System Health unlock cookie.
+ */
+export async function unlockSystemHealthDatabaseAction(formData: FormData) {
+  await requireSuperAdmin();
+
+  const limited = await rateLimitAction("system-health-db-unlock", 10, 60 * 15);
+  if (!limited.ok) {
+    return { error: "Too many database unlock attempts. Try again later." };
+  }
+
+  const ops = await readSystemHealthGate();
+  if (!ops.unlocked) {
+    return { error: "Unlock System Health first.", needsOpsUnlock: true as const };
+  }
+
+  const parsed = unlockSchema.safeParse({
+    email: String(formData.get("email") ?? "").trim(),
+    password: String(formData.get("password") ?? ""),
+  });
+  if (!parsed.success) {
+    return { error: "Enter a valid email and password" };
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const creds = await getSystemHealthCredentials();
+
+  if (creds) {
+    if (creds.locked) {
+      return {
+        error:
+          "System Health access is blocked. A super admin must unblock it (button below or SQL).",
+        locked: true as const,
+      };
+    }
+
+    const passwordOk = await verifyDbPassword(parsed.data.password, creds.passwordHash);
+    const emailOk = email === creds.email.toLowerCase();
+
+    if (!emailOk || !passwordOk) {
+      const result = await recordUnlockFailure(creds);
+      if (result.locked) {
+        await clearSystemHealthCookie();
+        revalidatePath("/system-health");
+        revalidatePath("/system-health/database");
+        return {
+          error: "System Health access is blocked after too many failed attempts.",
+          locked: true as const,
+        };
+      }
+      revalidatePath("/system-health");
+      return {
+        error: genericCredentialError(result.remaining),
+        offerPin: true as const,
+        remaining: result.remaining,
+      };
+    }
+
+    await resetUnlockFailures(creds);
+    const token = createSystemHealthDbToken(creds.email);
+    await setSystemHealthDbCookie(token);
+    revalidatePath("/system-health/database");
+    return { ok: true as const };
+  }
+
+  if (!isEnvSystemHealthGateConfigured()) {
+    return {
+      error: "System Health is not set up yet. Complete first-time setup.",
+      needsSetup: true as const,
+    };
+  }
+
+  const configuredEmail = getConfiguredSystemHealthEmail();
+  const passwordOk = await verifySystemHealthPassword(parsed.data.password);
+  if (email !== configuredEmail || !passwordOk) {
+    return { error: "Invalid System Health credentials" };
+  }
+
+  const token = createSystemHealthDbToken(email);
+  await setSystemHealthDbCookie(token);
+  revalidatePath("/system-health/database");
+  return { ok: true as const };
+}
+
+/**
+ * Re-authenticate with the 6-digit memorable code to open the database console.
+ */
+export async function unlockSystemHealthDatabaseWithPinAction(formData: FormData) {
+  await requireSuperAdmin();
+
+  const limited = await rateLimitAction("system-health-db-unlock-pin", 10, 60 * 15);
+  if (!limited.ok) {
+    return { error: "Too many database unlock attempts. Try again later." };
+  }
+
+  const ops = await readSystemHealthGate();
+  if (!ops.unlocked) {
+    return { error: "Unlock System Health first.", needsOpsUnlock: true as const };
+  }
+
+  const parsed = pinSchema.safeParse({
+    pin: String(formData.get("pin") ?? "").trim(),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Enter the 6-digit code", offerPin: true as const };
+  }
+
+  const creds = await getSystemHealthCredentials();
+  if (!creds) {
+    return { error: "Memorable code unlock requires in-app System Health setup.", needsSetup: true as const };
+  }
+
+  if (creds.locked) {
+    return {
+      error:
+        "System Health access is blocked. A super admin must unblock it (button below or SQL).",
+      locked: true as const,
+    };
+  }
+
+  const pinOk = await verifyDbPin(parsed.data.pin, creds.pinHash);
+  if (!pinOk) {
+    const result = await recordUnlockFailure(creds);
+    if (result.locked) {
+      await clearSystemHealthCookie();
+      revalidatePath("/system-health");
+      revalidatePath("/system-health/database");
+      return {
+        error: "System Health access is blocked after too many failed attempts.",
+        locked: true as const,
+      };
+    }
+    revalidatePath("/system-health");
+    return {
+      error: genericCredentialError(result.remaining),
+      offerPin: true as const,
+      remaining: result.remaining,
+    };
+  }
+
+  await resetUnlockFailures(creds);
+  const token = createSystemHealthDbToken(creds.email);
+  await setSystemHealthDbCookie(token);
+  revalidatePath("/system-health/database");
   return { ok: true as const };
 }

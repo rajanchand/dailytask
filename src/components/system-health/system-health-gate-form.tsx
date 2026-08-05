@@ -1,11 +1,14 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   lockSystemHealthAction,
   setupSystemHealthAction,
   unblockSystemHealthAction,
   unlockSystemHealthAction,
+  unlockSystemHealthDatabaseAction,
+  unlockSystemHealthDatabaseWithPinAction,
   unlockSystemHealthWithPinAction,
 } from "@/server/actions/system-health-gate";
 import { Button } from "@/components/ui/button";
@@ -280,5 +283,143 @@ export function SystemHealthLockButton() {
         {pending ? "Locking…" : "Lock System Health"}
       </Button>
     </form>
+  );
+}
+
+type DbChallengeState = {
+  error?: string;
+  ok?: boolean;
+  offerPin?: boolean;
+  locked?: boolean;
+  remaining?: number;
+  needsSetup?: boolean;
+  needsOpsUnlock?: boolean;
+};
+
+export function SystemHealthDatabaseChallengeForm({
+  pinAvailable = true,
+}: {
+  pinAvailable?: boolean;
+}) {
+  const [step, setStep] = useState<"password" | "pin">("password");
+  const router = useRouter();
+
+  const [passwordState, passwordAction, passwordPending] = useActionState(
+    async (_prev: DbChallengeState | undefined, formData: FormData) => {
+      const result = await unlockSystemHealthDatabaseAction(formData);
+      if (result.offerPin && pinAvailable) setStep("pin");
+      if (result.ok) {
+        router.refresh();
+      } else if (result.locked || result.needsOpsUnlock) {
+        router.push("/system-health");
+        router.refresh();
+      }
+      return result;
+    },
+    undefined,
+  );
+
+  const [pinState, pinAction, pinPending] = useActionState(
+    async (_prev: DbChallengeState | undefined, formData: FormData) => {
+      const result = await unlockSystemHealthDatabaseWithPinAction(formData);
+      if (result.ok) {
+        router.refresh();
+      } else if (result.locked || result.needsOpsUnlock) {
+        router.push("/system-health");
+        router.refresh();
+      }
+      return result;
+    },
+    undefined,
+  );
+
+  const activeError = step === "pin" ? pinState?.error : passwordState?.error;
+
+  return (
+    <Card className="mx-auto max-w-md">
+      <CardHeader>
+        <CardTitle>Confirm database access</CardTitle>
+        <CardDescription>
+          Database console needs a second check. Re-enter the System Health password or 6-digit
+          memorable code. This is separate from the main unlock and expires after 10 minutes.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {activeError && (
+          <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {activeError}
+          </p>
+        )}
+
+        {step === "password" ? (
+          <form action={passwordAction} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="sh-db-email">Ops email</Label>
+              <Input
+                id="sh-db-email"
+                name="email"
+                type="email"
+                required
+                autoComplete="off"
+                placeholder="ops@example.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sh-db-password">System Health password</Label>
+              <Input
+                id="sh-db-password"
+                name="password"
+                type="password"
+                required
+                autoComplete="off"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={passwordPending}>
+              {passwordPending ? "Verifying…" : "Open database"}
+            </Button>
+            {pinAvailable ? (
+              <button
+                type="button"
+                className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+                onClick={() => setStep("pin")}
+              >
+                Use memorable code instead
+              </button>
+            ) : null}
+          </form>
+        ) : (
+          <form action={pinAction} className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Enter the 6-digit memorable code from System Health setup. Failed attempts count
+              toward the same lockout limit.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="sh-db-pin">Memorable code</Label>
+              <Input
+                id="sh-db-pin"
+                name="pin"
+                type="text"
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                required
+                autoComplete="off"
+                placeholder="••••••"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={pinPending}>
+              {pinPending ? "Verifying…" : "Open database with code"}
+            </Button>
+            <button
+              type="button"
+              className="w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+              onClick={() => setStep("password")}
+            >
+              Back to password
+            </button>
+          </form>
+        )}
+      </CardContent>
+    </Card>
   );
 }

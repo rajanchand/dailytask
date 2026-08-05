@@ -144,6 +144,7 @@ System Health is gated in the database (`system_health_credentials`):
 2. Later visits → unlock with email + System Health password; after password failure you can use the PIN.
 3. After 5 failed unlock attempts (password and/or PIN) the row is `locked`; unlock is refused until a super admin uses **Unblock System Health** (normal app session, no ops password) or runs SQL below.
 4. Success sets a short-lived httpOnly cookie (`df_sys_health`, 30m) for diagnostics (DB metrics, login sessions with IP/UA/logout).
+5. **Open database** requires a second re-auth (same password or 6-digit code) and sets `df_sys_health_db` (10m). Direct navigation to `/system-health/database` shows the challenge until that cookie is set. **Lock System Health** clears both cookies. Failed DB re-auth attempts share the same `failed_count` / 5-fail lockout.
 
 Manual unblock in Postgres:
 
