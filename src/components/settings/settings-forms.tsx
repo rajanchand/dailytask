@@ -5,7 +5,6 @@ import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { Camera } from "lucide-react";
 import { updateProfileAction, changePasswordAction } from "@/server/actions/auth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +36,18 @@ type SettingsFormsProps = {
   };
 };
 
+const NOTIFICATION_OPTS: [keyof UserPrefs, string][] = [
+  ["morningReminder", "Morning reminder"],
+  ["tomorrowPreview", "Tomorrow preview"],
+  ["deadlineReminder", "Deadline reminder"],
+  ["overdue", "Overdue alerts"],
+  ["taskAssigned", "Task assigned"],
+  ["taskCompleted", "Task completed"],
+  ["dailySummary", "Daily summary"],
+  ["emailEnabled", "Email"],
+  ["inAppEnabled", "In-app"],
+];
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -44,6 +55,49 @@ function initials(name: string) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-5 border-b border-border/70 pb-8 last:border-b-0 last:pb-0">
+      <div>
+        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        {description ? (
+          <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Field({
+  id,
+  label,
+  children,
+  className,
+}: {
+  id: string;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className ?? "space-y-1.5"}>
+      <Label htmlFor={id} className="text-xs font-medium text-muted-foreground">
+        {label}
+      </Label>
+      {children}
+    </div>
+  );
 }
 
 export function SettingsForms({ user }: SettingsFormsProps) {
@@ -123,17 +177,14 @@ export function SettingsForms({ user }: SettingsFormsProps) {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-6 flex items-center gap-4">
-            <div className="relative">
-              <Avatar className="h-20 w-20">
+    <div className="mx-auto max-w-xl space-y-10">
+      <form action={profileAction} className="space-y-10">
+        <Section title="Profile" description="Your account details and contact info.">
+          <div className="flex items-center gap-4">
+            <div className="relative shrink-0">
+              <Avatar className="h-16 w-16">
                 {avatarUrl ? <AvatarImage src={avatarUrl} alt={user.name} /> : null}
-                <AvatarFallback className="bg-primary/10 text-lg font-semibold text-primary">
+                <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
                   {initials(user.name)}
                 </AvatarFallback>
               </Avatar>
@@ -141,10 +192,10 @@ export function SettingsForms({ user }: SettingsFormsProps) {
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={avatarPending}
-                className="absolute -bottom-1 -right-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-sm hover:bg-muted disabled:opacity-50"
+                className="absolute -bottom-0.5 -right-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                 aria-label="Upload profile photo"
               >
-                <Camera className="h-4 w-4" />
+                <Camera className="h-3.5 w-3.5" />
               </button>
               <input
                 ref={fileRef}
@@ -154,124 +205,108 @@ export function SettingsForms({ user }: SettingsFormsProps) {
                 onChange={onAvatarChange}
               />
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-medium">Profile photo</p>
-              <p className="text-xs text-muted-foreground">
-                JPEG, PNG, or WebP · max 2MB
-                {avatarPending ? " · Uploading…" : ""}
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              JPEG, PNG, or WebP · max 2MB
+              {avatarPending ? " · Uploading…" : ""}
+            </p>
           </div>
 
-          <form action={profileAction} className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="name" label="Name">
               <Input id="name" name="name" defaultValue={user.name} required />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                defaultValue={user.email}
-                required
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="timezone">Timezone</Label>
+            </Field>
+            <Field id="email" label="Email">
+              <Input id="email" name="email" type="email" defaultValue={user.email} required />
+            </Field>
+            <Field id="timezone" label="Timezone" className="space-y-1.5 sm:col-span-2">
               <Input id="timezone" name="timezone" defaultValue={user.timezone ?? "UTC"} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="address">Address</Label>
+            </Field>
+            <Field id="address" label="Address" className="space-y-1.5 sm:col-span-2">
               <Textarea
                 id="address"
                 name="address"
                 defaultValue={user.address ?? ""}
                 placeholder="Street, city, postal code"
-                rows={3}
+                rows={2}
               />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  name="phone"
-                  type="tel"
-                  defaultValue={user.phone ?? ""}
-                  placeholder="+44 …"
+            </Field>
+            <Field id="phone" label="Phone">
+              <Input
+                id="phone"
+                name="phone"
+                type="tel"
+                defaultValue={user.phone ?? ""}
+                placeholder="+44 …"
+              />
+            </Field>
+            <Field id="contactNumber" label="Contact number">
+              <Input
+                id="contactNumber"
+                name="contactNumber"
+                type="tel"
+                defaultValue={user.contactNumber ?? ""}
+                placeholder="Secondary / emergency"
+              />
+            </Field>
+          </div>
+        </Section>
+
+        <Section title="Notifications" description="Choose what you want to hear about.">
+          <div className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
+            {NOTIFICATION_OPTS.map(([key, label]) => (
+              <label
+                key={key}
+                htmlFor={key}
+                className="flex cursor-pointer items-center gap-2.5 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  id={key}
+                  name={key}
+                  defaultChecked={prefs ? prefs[key] : true}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary"
                 />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="contactNumber">Contact number</Label>
-                <Input
-                  id="contactNumber"
-                  name="contactNumber"
-                  type="tel"
-                  defaultValue={user.contactNumber ?? ""}
-                  placeholder="Secondary / emergency"
-                />
-              </div>
-            </div>
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </Section>
 
-            <div className="border-t border-border pt-4">
-              <p className="mb-3 text-sm font-medium">Notification Preferences</p>
-              <div className="grid gap-3">
-                {[
-                  ["morningReminder", "Morning Reminder"],
-                  ["tomorrowPreview", "Tomorrow Task Preview"],
-                  ["deadlineReminder", "Deadline Reminder"],
-                  ["overdue", "Overdue Alerts"],
-                  ["taskAssigned", "Task Assigned"],
-                  ["taskCompleted", "Task Completed"],
-                  ["dailySummary", "Daily Summary"],
-                  ["emailEnabled", "Email Notifications"],
-                  ["inAppEnabled", "In-App Notifications"],
-                ].map(([key, label]) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id={key}
-                      name={key}
-                      defaultChecked={prefs ? prefs[key as keyof UserPrefs] : true}
-                      className="h-4 w-4 rounded border-border accent-primary"
-                    />
-                    <Label htmlFor={key} className="font-normal">
-                      {label}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-            </div>
+        <div className="-mt-4">
+          <Button type="submit" disabled={profilePending}>
+            {profilePending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      </form>
 
-            <Button type="submit" disabled={profilePending}>
-              {profilePending ? "Saving…" : "Save Profile"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Change Password</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form action={passwordAction} className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="currentPassword">Current Password</Label>
-              <Input id="currentPassword" name="currentPassword" type="password" required />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="newPassword">New Password</Label>
-              <Input id="newPassword" name="newPassword" type="password" required minLength={8} />
-            </div>
-            <Button type="submit" disabled={passwordPending}>
-              {passwordPending ? "Updating…" : "Update Password"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <Section title="Password" description="Update your sign-in password.">
+        <form action={passwordAction} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="currentPassword" label="Current password">
+              <Input
+                id="currentPassword"
+                name="currentPassword"
+                type="password"
+                required
+                autoComplete="current-password"
+              />
+            </Field>
+            <Field id="newPassword" label="New password">
+              <Input
+                id="newPassword"
+                name="newPassword"
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+              />
+            </Field>
+          </div>
+          <Button type="submit" variant="outline" disabled={passwordPending}>
+            {passwordPending ? "Updating…" : "Update password"}
+          </Button>
+        </form>
+      </Section>
     </div>
   );
 }

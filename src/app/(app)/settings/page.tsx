@@ -24,7 +24,7 @@ export default async function SettingsPage() {
   if (!user) return null;
 
   return (
-    <div className="animate-fade-up">
+    <div className="animate-fade-up px-0.5">
       <SettingsForms user={user} />
     </div>
   );

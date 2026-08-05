@@ -26,7 +26,7 @@ export default async function DiscordPage() {
     : null;
 
   return (
-    <div className="max-w-2xl animate-fade-up">
+    <div className="mx-auto max-w-xl animate-fade-up px-0.5">
       <DiscordSettingsForm integration={formData} />
     </div>
   );
