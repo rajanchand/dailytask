@@ -122,6 +122,7 @@ export async function updateProjectAction(projectId: string, formData: FormData)
   });
 
   revalidatePath("/projects");
+  revalidatePath(`/projects/${projectId}`);
   return { ok: true };
 }
 
@@ -140,5 +141,6 @@ export async function deleteProjectAction(projectId: string) {
   });
 
   revalidatePath("/projects");
+  revalidatePath(`/projects/${projectId}`);
   return { ok: true };
 }

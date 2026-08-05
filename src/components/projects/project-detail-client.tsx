@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { EditProjectButton } from "@/components/projects/edit-project-button";
+import { DeleteProjectButton } from "@/components/projects/delete-project-button";
 import { createTaskAction } from "@/server/actions/tasks";
 import { canDeleteTask, canUpdateTask } from "@/server/task-access";
 import { PRIORITY_LABELS, todayISO } from "@/lib/utils";
@@ -57,6 +59,7 @@ type Props = {
     userId: string;
     role: Role;
     canCreate: boolean;
+    canManageProject: boolean;
   };
 };
 
@@ -127,7 +130,7 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
           </Link>
           <div className="flex items-center gap-3">
             <div
-              className="h-4 w-4 shrink-0 rounded-full"
+              className="h-4 w-4 shrink-0 rounded-full ring-2 ring-background shadow"
               style={{ backgroundColor: project.color }}
             />
             <div>
@@ -136,6 +139,19 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
                 <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>
               )}
             </div>
+            {access.canManageProject && (
+              <div className="ml-1 flex items-center gap-0.5">
+                <EditProjectButton project={project} variant="outline" size="sm" label="Edit" />
+                <DeleteProjectButton
+                  projectId={project.id}
+                  projectName={project.name}
+                  variant="outline"
+                  size="sm"
+                  label="Delete"
+                  redirectToList
+                />
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <span>
