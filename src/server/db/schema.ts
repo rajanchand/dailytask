@@ -257,6 +257,38 @@ export const reminders = pgTable("reminders", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const calendarEntryTypeEnum = pgEnum("calendar_entry_type", [
+  "event",
+  "notes",
+  "reminder",
+]);
+
+/** Personal calendar items (events, notes, reminders) — owner-scoped per user. */
+export const calendarEntries = pgTable(
+  "calendar_entries",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: calendarEntryTypeEnum("type").notNull().default("event"),
+    title: text("title").notNull(),
+    notes: text("notes"),
+    date: text("date").notNull(), // YYYY-MM-DD
+    startTime: text("start_time"), // HH:mm
+    endTime: text("end_time"),
+    allDay: boolean("all_day").notNull().default(true),
+    remindAt: timestamp("remind_at", { withTimezone: true }),
+    reminderSent: boolean("reminder_sent").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("calendar_entries_user_date_idx").on(t.userId, t.date),
+    index("calendar_entries_remind_idx").on(t.remindAt),
+  ],
+);
+
 export const discordIntegrations = pgTable("discord_integrations", {
   id: text("id").primaryKey(),
   teamId: text("team_id")
@@ -418,6 +450,8 @@ export type User = typeof users.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Team = typeof teams.$inferSelect;
+export type CalendarEntry = typeof calendarEntries.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type TaskStatus = (typeof taskStatusEnum.enumValues)[number];
 export type TaskPriority = (typeof taskPriorityEnum.enumValues)[number];
+export type CalendarEntryType = (typeof calendarEntryTypeEnum.enumValues)[number];

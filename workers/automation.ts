@@ -1,10 +1,10 @@
 import "dotenv/config";
 import { Worker, Queue } from "bullmq";
 import IORedis from "ioredis";
-import { and, eq, lte, ne } from "drizzle-orm";
+import { and, eq, lte, ne, isNotNull } from "drizzle-orm";
 import { format, addDays } from "date-fns";
 import { db } from "../src/server/db";
-import { tasks, users, dailySummaries, reminders } from "../src/server/db/schema";
+import { tasks, users, dailySummaries, reminders, calendarEntries } from "../src/server/db/schema";
 import { createNotification, logActivity } from "../src/server/services/activity";
 import { sendDiscordWebhook } from "../src/server/services/discord";
 import { newId, todayISO } from "../src/lib/utils";
@@ -224,6 +224,39 @@ async function deadlineCheckJob() {
       type: "deadline",
       sent: true,
     });
+  }
+
+  // Personal calendar entry reminders (remind_at due, not yet notified)
+  const dueEntries = await db
+    .select()
+    .from(calendarEntries)
+    .where(
+      and(
+        isNotNull(calendarEntries.remindAt),
+        lte(calendarEntries.remindAt, now),
+        eq(calendarEntries.reminderSent, false),
+      ),
+    );
+
+  for (const entry of dueEntries) {
+    if (!entry.remindAt) continue;
+    const [user] = await db.select().from(users).where(eq(users.id, entry.userId)).limit(1);
+    if (user?.notificationPrefs?.inAppEnabled === false) continue;
+    if (user?.notificationPrefs?.deadlineReminder === false) continue;
+
+    await createNotification({
+      userId: entry.userId,
+      type: "calendar_reminder",
+      title: "Calendar reminder",
+      body: `📅 ${entry.title}${entry.notes ? ` — ${entry.notes.slice(0, 120)}` : ""}`,
+      link: "/calendar",
+      metadata: { entryId: entry.id, date: entry.date, type: entry.type },
+    });
+
+    await db
+      .update(calendarEntries)
+      .set({ reminderSent: true, updatedAt: new Date() })
+      .where(eq(calendarEntries.id, entry.id));
   }
 }
 
