@@ -235,7 +235,10 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     projectId: formData.get("projectId") ?? existing.projectId,
     categoryId: formData.get("categoryId") ?? existing.categoryId,
     recurrence,
-    dailyNotify: parseDailyNotify(formData, recurrence),
+    dailyNotify:
+      formData.getAll("dailyNotify").length > 0
+        ? parseDailyNotify(formData, recurrence)
+        : existing.dailyNotify || recurrence === "daily",
   });
 
   if (!parsed.success) return { error: "Invalid task data" };
