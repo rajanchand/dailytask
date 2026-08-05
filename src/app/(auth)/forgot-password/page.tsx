@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { forgotPasswordAction } from "@/server/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +12,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 type State = { ok?: boolean; message?: string; resetUrl?: string; error?: string };
 
 export default function ForgotPasswordPage() {
+  const lastToast = useRef<string | null>(null);
   const [state, action, pending] = useActionState(
     async (_prev: State | undefined, formData: FormData) => {
       return (await forgotPasswordAction(formData)) as State;
     },
     undefined,
   );
+
+  useEffect(() => {
+    if (!state) return;
+    const key = state.error ?? state.message ?? "";
+    if (!key || lastToast.current === key) return;
+    lastToast.current = key;
+    if (state.error) toast.error(state.error);
+    else if (state.message) toast.success(state.message);
+  }, [state]);
 
   return (
     <Card>
@@ -27,8 +38,15 @@ export default function ForgotPasswordPage() {
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-4">
-          {state?.message && (
-            <p className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground">{state.message}</p>
+          {state?.error && (
+            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {state.error}
+            </p>
+          )}
+          {state?.ok && state.message && (
+            <p className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground">
+              {state.message}
+            </p>
           )}
           {state?.resetUrl && (
             <p className="rounded-lg bg-muted px-3 py-2 text-sm break-all">

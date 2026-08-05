@@ -78,7 +78,7 @@ export function SettingsForms({ user }: SettingsFormsProps) {
       if (result?.mustChangePassword === false) {
         await update({ mustChangePassword: false });
       }
-      toast.success("Password updated");
+      toast.success("Password updated. A confirmation email was sent.");
     }
   }, null);
 

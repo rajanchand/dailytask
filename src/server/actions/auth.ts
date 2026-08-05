@@ -16,9 +16,44 @@ import { rateLimitAction } from "@/server/security/rate-limit";
 import {
   getAppUrl,
   sendInviteEmail,
+  sendPasswordChangedEmail,
   sendPasswordResetEmail,
 } from "@/server/services/mail";
+import { createNotification } from "@/server/services/activity";
 import { isPublicRegisterAllowed } from "@/server/auth-flags";
+
+async function notifyPasswordChanged(user: {
+  id: string;
+  email: string;
+  name: string;
+}) {
+  const changedAt = new Date();
+  try {
+    await sendPasswordChangedEmail({
+      to: user.email,
+      name: user.name,
+      changedAt,
+    });
+  } catch (err) {
+    console.error("Password changed email failed", err);
+  }
+
+  try {
+    await createNotification({
+      userId: user.id,
+      type: "security",
+      title: "Password changed",
+      body: `Your password was changed on ${changedAt.toLocaleString("en-GB", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "UTC",
+      })} (UTC). If this wasn’t you, contact an admin.`,
+      link: "/settings",
+    });
+  } catch (err) {
+    console.error("Password changed notification failed", err);
+  }
+}
 
 const registerSchema = z.object({
   name: z.string().min(2).max(120),
@@ -113,11 +148,21 @@ export async function forgotPasswordAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").toLowerCase().trim();
   const limited = await rateLimitAction("forgot", 5, 60 * 15, email || "anon");
   if (!limited.ok) {
-    return { ok: true, message: "If that email exists, reset instructions were sent." };
+    return { error: "Too many attempts. Try again later." };
+  }
+
+  if (!email || !z.string().email().safeParse(email).success) {
+    return { error: "Enter a valid email address" };
   }
 
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  if (!user) return { ok: true, message: "If that email exists, reset instructions were sent." };
+  if (!user) {
+    return { error: "No account found with that email" };
+  }
+
+  if (user.disabled) {
+    return { error: "No account found with that email" };
+  }
 
   const token = randomBytes(32).toString("hex");
   await db
@@ -146,33 +191,37 @@ export async function forgotPasswordAction(formData: FormData) {
       };
     }
     return {
-      ok: true,
-      message: "If that email exists, reset instructions were sent.",
+      error:
+        err instanceof Error
+          ? err.message
+          : "Could not send reset email. Please try again later.",
     };
   }
 
   if (process.env.NODE_ENV === "development") {
     return {
       ok: true,
-      message: "Reset email sent (dev also shows link).",
+      message: "Password reset link sent. Check your email.",
       resetUrl: `/reset-password?token=${token}`,
     };
   }
 
   return {
     ok: true,
-    message: "If that email exists, reset instructions were sent.",
+    message: "Password reset link sent. Check your email.",
   };
 }
 
 export async function resetPasswordAction(formData: FormData) {
   const token = String(formData.get("token") ?? "");
   const password = String(formData.get("password") ?? "");
+  const confirm = String(formData.get("confirmPassword") ?? "");
   if (!token || password.length < 8) return { error: "Invalid reset request" };
+  if (confirm && password !== confirm) return { error: "Passwords do not match" };
 
   const [user] = await db.select().from(users).where(eq(users.resetToken, token)).limit(1);
   if (!user?.resetTokenExpires || user.resetTokenExpires < new Date()) {
-    return { error: "Reset token expired" };
+    return { error: "Reset token expired or invalid" };
   }
 
   await db
@@ -186,7 +235,9 @@ export async function resetPasswordAction(formData: FormData) {
     })
     .where(eq(users.id, user.id));
 
-  redirect("/login");
+  await notifyPasswordChanged({ id: user.id, email: user.email, name: user.name });
+
+  return { ok: true };
 }
 
 const profileSchema = z.object({
@@ -275,18 +326,26 @@ export async function changePasswordAction(formData: FormData) {
   if (!user) return { error: "User not found" };
 
   if (!user.mustChangePassword) {
+    if (!current) return { error: "Current password is required" };
     const ok = await compare(current, user.passwordHash);
     if (!ok) return { error: "Current password is incorrect" };
   }
+
+  const same = await compare(next, user.passwordHash);
+  if (same) return { error: "New password must be different from your current password" };
 
   await db
     .update(users)
     .set({
       passwordHash: await hash(next, 12),
       mustChangePassword: false,
+      resetToken: null,
+      resetTokenExpires: null,
       updatedAt: new Date(),
     })
     .where(eq(users.id, session.user.id));
+
+  await notifyPasswordChanged({ id: user.id, email: user.email, name: user.name });
 
   return { ok: true, mustChangePassword: false };
 }
@@ -294,6 +353,10 @@ export async function changePasswordAction(formData: FormData) {
 /** First-login forced password change (no current password required when flagged). */
 export async function forceChangePasswordAction(formData: FormData) {
   const session = await requireSession();
+
+  const limited = await rateLimitAction("force-change-password", 10, 60 * 15, session.user.id);
+  if (!limited.ok) return { error: "Too many password attempts. Try again later." };
+
   const next = String(formData.get("newPassword") ?? "");
   const confirm = String(formData.get("confirmPassword") ?? "");
 
@@ -311,9 +374,13 @@ export async function forceChangePasswordAction(formData: FormData) {
     .set({
       passwordHash: await hash(next, 12),
       mustChangePassword: false,
+      resetToken: null,
+      resetTokenExpires: null,
       updatedAt: new Date(),
     })
     .where(eq(users.id, session.user.id));
+
+  await notifyPasswordChanged({ id: user.id, email: user.email, name: user.name });
 
   return { ok: true };
 }

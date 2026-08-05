@@ -279,3 +279,70 @@ export async function sendPasswordResetEmail(input: {
 
   await sendMail({ to: input.to, subject, text, html });
 }
+
+export async function sendPasswordChangedEmail(input: {
+  to: string;
+  name: string;
+  changedAt?: Date;
+}) {
+  const changedAt = input.changedAt ?? new Date();
+  const timestamp = changedAt.toLocaleString("en-GB", {
+    dateStyle: "full",
+    timeStyle: "long",
+    timeZone: "UTC",
+  });
+  const loginUrl = `${getAppUrl()}/login`;
+  const subject = `Your password was changed`;
+  const safeName = escapeHtml(input.name);
+  const safeTs = escapeHtml(timestamp);
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `Your ${APP_NAME} password was changed on ${timestamp} (UTC).`,
+    "",
+    `Sign in: ${loginUrl}`,
+    "",
+    "If you did not make this change, contact your administrator immediately.",
+    "",
+    `— ${APP_NAME}`,
+    `This message was sent from ${getMailFrom()}`,
+  ].join("\n");
+
+  const bodyHtml = `
+    <p style="margin:0 0 12px;font-size:16px;">Hi ${safeName},</p>
+    <p style="margin:0 0 8px;">
+      Your <strong>${escapeHtml(APP_NAME)}</strong> password was changed successfully.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;background:${SURFACE};border:1px solid ${BORDER};border-radius:10px;">
+      <tr>
+        <td style="padding:16px 18px;font-family:Segoe UI,Helvetica Neue,Arial,sans-serif;font-size:14px;line-height:1.55;color:${TEXT};">
+          <p style="margin:0 0 10px;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:${MUTED};">
+            Change details
+          </p>
+          <p style="margin:0;">
+            <span style="display:inline-block;min-width:140px;color:${MUTED};">When</span><br/>
+            <span style="font-weight:600;">${safeTs} (UTC)</span>
+          </p>
+        </td>
+      </tr>
+    </table>
+    ${ctaButton(loginUrl, "Sign in to Dailytask Manager")}
+    <p style="margin:0 0 16px;font-size:13px;color:${MUTED};">
+      Or open this link:<br/>
+      <a href="${escapeHtml(loginUrl)}" style="color:${BRAND_TEAL_DARK};word-break:break-all;">${escapeHtml(loginUrl)}</a>
+    </p>
+    <p style="margin:0;padding:12px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:13px;color:#9a3412;line-height:1.5;">
+      <strong style="color:#9a3412;">Security note:</strong>
+      If you did not change your password, contact your administrator immediately.
+    </p>
+  `;
+
+  const html = emailShell({
+    preheader: `Your ${APP_NAME} password was changed on ${timestamp} (UTC).`,
+    title: subject,
+    bodyHtml,
+  });
+
+  await sendMail({ to: input.to, subject, text, html });
+}

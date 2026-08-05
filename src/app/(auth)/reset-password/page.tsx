@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useActionState, Suspense } from "react";
+import { toast } from "sonner";
 import { resetPasswordAction } from "@/server/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,12 +11,19 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 function ResetForm() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
 
+  type State = { error?: string; ok?: boolean };
+
   const [state, action, pending] = useActionState(
-    async (_prev: { error?: string } | undefined, formData: FormData) => {
-      return (await resetPasswordAction(formData)) ?? undefined;
+    async (_prev: State | undefined, formData: FormData): Promise<State> => {
+      const result = await resetPasswordAction(formData);
+      if (result?.error) return { error: result.error };
+      toast.success("Password updated. You can sign in now.");
+      router.replace("/login");
+      return { ok: true };
     },
     undefined,
   );
@@ -44,16 +52,34 @@ function ResetForm() {
         <form action={action} className="space-y-4">
           <input type="hidden" name="token" value={token} />
           {state?.error && (
-            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.error}</p>
+            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {state.error}
+            </p>
           )}
           <div className="space-y-2">
             <Label htmlFor="password">New password</Label>
             <Input id="password" name="password" type="password" required minLength={8} />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirm password</Label>
+            <Input
+              id="confirmPassword"
+              name="confirmPassword"
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+            />
+          </div>
           <Button type="submit" className="w-full" disabled={pending}>
             {pending ? "Resetting…" : "Reset password"}
           </Button>
         </form>
+        <p className="mt-4 text-center text-sm text-muted-foreground">
+          <Link href="/login" className="text-primary hover:underline">
+            Back to sign in
+          </Link>
+        </p>
       </CardContent>
     </Card>
   );
