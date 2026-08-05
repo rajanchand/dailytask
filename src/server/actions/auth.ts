@@ -189,13 +189,16 @@ export async function forgotPasswordAction(formData: FormData) {
     return { error: "Enter a valid email address" };
   }
 
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  if (!user) {
-    return { error: "No user details found" };
-  }
+  // Always return the same message whether the email exists (no user enumeration).
+  const genericOk = {
+    ok: true as const,
+    message:
+      "If an account exists for that email, a password reset link has been sent.",
+  };
 
-  if (user.disabled) {
-    return { error: "No user details found" };
+  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  if (!user || user.disabled) {
+    return genericOk;
   }
 
   const token = randomBytes(32).toString("hex");
@@ -219,31 +222,24 @@ export async function forgotPasswordAction(formData: FormData) {
     console.error("Password reset email failed", err);
     if (process.env.NODE_ENV === "development") {
       return {
-        ok: true,
+        ...genericOk,
         message: "Email not configured — use this reset link (dev).",
         resetUrl: `/reset-password?token=${token}`,
       };
     }
-    return {
-      error:
-        err instanceof Error
-          ? err.message
-          : "Could not send reset email. Please try again later.",
-    };
+    // Do not reveal SMTP failures to anonymous callers in production.
+    return genericOk;
   }
 
   if (process.env.NODE_ENV === "development") {
     return {
-      ok: true,
+      ...genericOk,
       message: "Password reset link sent. Check your email.",
       resetUrl: `/reset-password?token=${token}`,
     };
   }
 
-  return {
-    ok: true,
-    message: "Password reset link sent. Check your email.",
-  };
+  return genericOk;
 }
 
 export async function resetPasswordAction(formData: FormData) {

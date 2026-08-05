@@ -64,10 +64,16 @@ echo "==> Rsyncing ${ROOT} → ${USER}@${HOST}:${APP_DIR}"
 run_rsync "${ROOT}/" "${USER}@${HOST}:${APP_DIR}/"
 
 echo "==> Rebuilding and restarting containers"
-run_ssh "cd '${APP_DIR}' && docker compose -f docker-compose.prod.yml up -d --build"
+# App stack always. Worker profile is production-critical (morning/EOD jobs).
+# Bot is optional — set DEPLOY_BOT=1 to (re)start the Discord bot profile.
+run_ssh "cd '${APP_DIR}' && docker compose -f docker-compose.prod.yml --profile worker up -d --build"
+if [[ "${DEPLOY_BOT:-0}" == "1" ]]; then
+  echo "==> Starting Discord bot profile (DEPLOY_BOT=1)"
+  run_ssh "cd '${APP_DIR}' && docker compose -f docker-compose.prod.yml --profile bot up -d --build"
+fi
 
 echo "==> Waiting for health"
-sleep 10
-run_ssh "curl -fsS http://127.0.0.1:3000/api/health || (docker compose -f '${APP_DIR}/docker-compose.prod.yml' logs --tail=80 app; exit 1)"
+sleep 15
+run_ssh "curl -fsS http://127.0.0.1:3000/api/health || (cd '${APP_DIR}' && docker compose -f docker-compose.prod.yml logs --tail=80 app; exit 1)"
 
 echo "==> Deploy complete"

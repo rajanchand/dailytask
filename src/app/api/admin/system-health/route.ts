@@ -64,7 +64,7 @@ export async function GET(request: Request) {
     if (message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (message === "Forbidden" || message === "SystemHealthLocked") {
+    if (message === "Forbidden" || message === "SystemHealthLocked" || message === "SystemHealthDbLocked") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     return NextResponse.json({ error: "Unable to load system health" }, { status: 500 });

@@ -47,6 +47,20 @@ do
   sleep 1
 done
 
+# Soft config checks (do not abort — schema push / start still useful for debugging)
+if [ -z "${AUTH_SECRET:-}${NEXTAUTH_SECRET:-}" ]; then
+  echo "[entrypoint] WARNING: AUTH_SECRET is empty — sessions will not be secure"
+fi
+if [ -n "${APP_URL:-}" ] && [ -n "${AUTH_URL:-}" ] && [ "$APP_URL" != "$AUTH_URL" ]; then
+  echo "[entrypoint] WARNING: APP_URL ($APP_URL) != AUTH_URL ($AUTH_URL) — keep them identical in production"
+fi
+if [ "${NODE_ENV:-}" = "production" ] && echo "${AUTH_URL:-}${APP_URL:-}" | grep -Eq 'localhost|127\.0\.0\.1'; then
+  echo "[entrypoint] WARNING: AUTH_URL/APP_URL looks like localhost in production"
+fi
+if [ "${RUN_SEED:-false}" = "true" ] && [ "${NODE_ENV:-}" = "production" ]; then
+  echo "[entrypoint] WARNING: RUN_SEED=true in production will wipe users/tasks"
+fi
+
 echo "[entrypoint] Applying schema (drizzle-kit push)..."
 # Bypass pnpm script deps/supply-chain checks — binaries already in the image
 if [ -x ./node_modules/.bin/drizzle-kit ]; then
@@ -57,13 +71,16 @@ else
   pnpm --config.minimumReleaseAge=0 run db:push
 fi
 
+# Production: RUN_SEED must stay false unless you intentionally wipe users.
 if [ "${RUN_SEED:-false}" = "true" ]; then
-  echo "[entrypoint] Seeding database..."
+  echo "[entrypoint] WARNING: RUN_SEED=true will TRUNCATE users/tasks and reseed."
   if [ -x ./node_modules/.bin/tsx ]; then
     ./node_modules/.bin/tsx scripts/seed.ts || echo "[entrypoint] Seed skipped/failed (continuing)"
   else
     pnpm --config.minimumReleaseAge=0 run db:seed || echo "[entrypoint] Seed skipped/failed (continuing)"
   fi
+else
+  echo "[entrypoint] Skipping seed (RUN_SEED!=true)"
 fi
 
 mkdir -p "${UPLOAD_DIR:-./uploads}"

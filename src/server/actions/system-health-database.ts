@@ -68,6 +68,17 @@ async function requireDbConsole() {
   return session;
 }
 
+/** Map gate lock errors to user-facing copy (never leak raw error codes). */
+function gateErrorMessage(err: unknown) {
+  const msg = err instanceof Error ? err.message : "Forbidden";
+  if (msg === "SystemHealthLocked") return "System Health unlock required";
+  if (msg === "SystemHealthDbLocked") {
+    return "Database console re-authentication required";
+  }
+  if (msg === "Unauthorized" || msg === "Forbidden") return msg;
+  return msg;
+}
+
 async function countSuperAdmins(excludeUserId?: string) {
   const condition = excludeUserId
     ? and(eq(users.role, "super_admin"), ne(users.id, excludeUserId))
@@ -80,8 +91,7 @@ export async function listDatabaseUsersAction() {
   try {
     await requireDbConsole();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 
   const rows = await db
@@ -96,8 +106,7 @@ export async function getDatabaseUserDetailAction(userId: string) {
   try {
     await requireDbConsole();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 
   if (!userId) return { error: "User id required" };
@@ -194,8 +203,7 @@ export async function listDatabaseUserSessionsAction(
   try {
     await requireDbConsole();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 
   if (!userId) return { error: "User id required" };
@@ -323,8 +331,7 @@ export async function updateDatabaseUserAction(input: unknown) {
     revalidatePath("/team");
     return { ok: true as const, message: "User updated" };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 }
 
@@ -372,8 +379,7 @@ export async function setDatabaseUserDisabledAction(userId: string, disabled: bo
       message: disabled ? "User blocked" : "User unblocked",
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 }
 
@@ -456,8 +462,7 @@ export async function resetDatabaseUserPasswordAction(userId: string) {
       message: `Password reset email sent to ${target.email}`,
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Forbidden";
-    return { error: msg === "SystemHealthLocked" ? "System Health unlock required" : msg };
+    return { error: gateErrorMessage(err) };
   }
 }
 
@@ -548,8 +553,8 @@ export async function deleteDatabaseUserAction(userId: string) {
   } catch (err) {
     console.error("deleteDatabaseUserAction failed", err);
     const msg = err instanceof Error ? err.message : "Forbidden";
-    if (msg === "SystemHealthLocked") {
-      return { error: "System Health unlock required" };
+    if (msg === "SystemHealthLocked" || msg === "SystemHealthDbLocked") {
+      return { error: gateErrorMessage(err) };
     }
     if (msg.includes("foreign key") || msg.includes("violates")) {
       return {

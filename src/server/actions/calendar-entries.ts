@@ -8,6 +8,7 @@ import { calendarEntries, type CalendarEntryType } from "@/server/db/schema";
 import { newId } from "@/lib/utils";
 import { requireSession } from "@/server/session";
 import { logActivity } from "@/server/services/activity";
+import { rateLimitAction } from "@/server/security/rate-limit";
 
 const entryTypeSchema = z.enum(["event", "notes", "reminder"]);
 
@@ -87,6 +88,9 @@ export async function getCalendarEntries(filters?: { from?: string; to?: string;
 
 export async function createCalendarEntryAction(formData: FormData) {
   const session = await requireSession();
+  const limited = await rateLimitAction("calendar-create", 40, 60 * 15, session.user.id);
+  if (!limited.ok) return { error: "Too many calendar updates. Try again later." };
+
   const parsed = parseForm(formData);
   if (!parsed.success) return { error: "Invalid entry data" };
 
@@ -122,6 +126,9 @@ export async function createCalendarEntryAction(formData: FormData) {
 
 export async function updateCalendarEntryAction(entryId: string, formData: FormData) {
   const session = await requireSession();
+  const limited = await rateLimitAction("calendar-update", 60, 60 * 15, session.user.id);
+  if (!limited.ok) return { error: "Too many calendar updates. Try again later." };
+
   const owned = await requireOwnedEntry(entryId, session.user.id);
   if ("error" in owned) return { error: owned.error };
 
@@ -164,6 +171,9 @@ export async function updateCalendarEntryAction(entryId: string, formData: FormD
 
 export async function deleteCalendarEntryAction(entryId: string) {
   const session = await requireSession();
+  const limited = await rateLimitAction("calendar-delete", 40, 60 * 15, session.user.id);
+  if (!limited.ok) return { error: "Too many calendar updates. Try again later." };
+
   const owned = await requireOwnedEntry(entryId, session.user.id);
   if ("error" in owned) return { error: owned.error };
 

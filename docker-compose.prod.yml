@@ -49,9 +49,20 @@ services:
       REDIS_URL: redis://redis:6379
       PORT: "3000"
       UPLOAD_DIR: /app/uploads
-      RUN_SEED: ${RUN_SEED:-true}
+      # NEVER default seed on in production — seed truncates users/tasks.
+      RUN_SEED: ${RUN_SEED:-false}
     volumes:
       - dailyflow_uploads_prod:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +70,9 @@ services:
         condition: service_healthy
     networks:
       - dailyflow
-
+    # Soft resource guidance (host can override). Avoid OOM killing the whole host.
+    mem_limit: ${APP_MEM_LIMIT:-1536m}
+    cpus: ${APP_CPUS:-2.0}
   worker:
     profiles: ["worker"]
     build: .

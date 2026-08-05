@@ -8,17 +8,63 @@ function id() {
   return crypto.randomUUID();
 }
 
+const DEFAULT_DEV_PASSWORD = "password123";
+const DEFAULT_SEED_EMAIL = "rajanchand@zero-trust-security.org";
+
 /**
- * Wipe app data and seed a single super admin: Rajanchand.
+ * Wipe app data and seed a single super admin.
  * Additional members are created only via Team → Invite (DB + email).
+ *
+ * Production safeguards:
+ * - Refuse the default weak password unless ALLOW_INSECURE_SEED=true
+ * - Prefer SEED_PASSWORD / SEED_ADMIN_EMAIL from env
+ * - Force mustChangePassword=true in production (or SEED_FORCE_PASSWORD_CHANGE=true)
+ * - Does NOT truncate system_health_credentials (ops gate survives reseed)
  */
 async function seed() {
-  console.log("Resetting database to a clean Rajanchand-only workspace...");
+  const isProd = process.env.NODE_ENV === "production";
+  const seedPassword = (process.env.SEED_PASSWORD || DEFAULT_DEV_PASSWORD).trim();
+  const seedEmail = (
+    process.env.SEED_ADMIN_EMAIL ||
+    process.env.SEED_EMAIL ||
+    DEFAULT_SEED_EMAIL
+  )
+    .trim()
+    .toLowerCase();
+  const seedName = (process.env.SEED_ADMIN_NAME || "Rajanchand").trim() || "Rajanchand";
+  const allowInsecure = process.env.ALLOW_INSECURE_SEED === "true";
+  const forceChange =
+    process.env.SEED_FORCE_PASSWORD_CHANGE === "true" ||
+    (isProd && process.env.SEED_FORCE_PASSWORD_CHANGE !== "false");
+
+  if (isProd && seedPassword === DEFAULT_DEV_PASSWORD && !allowInsecure) {
+    console.error(
+      "[seed] Refusing to seed production with the default password.\n" +
+        "Set SEED_PASSWORD to a strong secret, or ALLOW_INSECURE_SEED=true (not recommended).",
+    );
+    process.exit(1);
+  }
+
+  if (seedPassword.length < 12 && isProd && !allowInsecure) {
+    console.error("[seed] SEED_PASSWORD must be at least 12 characters in production.");
+    process.exit(1);
+  }
+
+  console.log("Resetting database to a clean single-admin workspace...");
+  if (forceChange) {
+    console.warn("[seed] mustChangePassword=true — admin must change password on first login.");
+  }
+  if (seedPassword === DEFAULT_DEV_PASSWORD) {
+    console.warn(
+      "[seed] WARNING: using default demo password. Change it immediately after login.",
+    );
+  }
 
   // Preserve Discord webhook across reseed (Send Report depends on it).
   const [savedDiscord] = await db.select().from(discordIntegrations).limit(1);
 
-  // Clear all app tables (FK-safe). discord_integrations cascades off teams.
+  // Clear app tables (FK-safe). Keep system_health_credentials intact.
+  // discord_integrations cascades off teams — restore after.
   await db.execute(sql`
     TRUNCATE TABLE
       activity_logs,
@@ -32,24 +78,26 @@ async function seed() {
       tags,
       categories,
       projects,
+      calendar_entries,
+      user_sessions,
       team_members,
       teams,
       users
     RESTART IDENTITY CASCADE
   `);
 
-  const passwordHash = await hash("password123", 12);
+  const passwordHash = await hash(seedPassword, 12);
   const rajanId = id();
   const teamId = id();
 
   await db.insert(users).values({
     id: rajanId,
-    name: "Rajanchand",
-    email: "rajanchand@zero-trust-security.org",
+    name: seedName,
+    email: seedEmail,
     passwordHash,
     role: "super_admin",
-    timezone: "Europe/London",
-    mustChangePassword: false,
+    timezone: process.env.SEED_TIMEZONE?.trim() || "Europe/London",
+    mustChangePassword: forceChange,
     image: null,
   });
 
@@ -113,8 +161,12 @@ async function seed() {
 
   console.log("Seed complete — fresh workspace.");
   console.log("Super admin login:");
-  console.log("  Email:    rajanchand@zero-trust-security.org");
-  console.log("  Password: password123");
+  console.log(`  Email:    ${seedEmail}`);
+  console.log(
+    forceChange || seedPassword !== DEFAULT_DEV_PASSWORD
+      ? "  Password: (from SEED_PASSWORD / env — not printed)"
+      : `  Password: ${DEFAULT_DEV_PASSWORD}  ← CHANGE IMMEDIATELY`,
+  );
   console.log("Invite teammates from /team — they are saved to the DB and emailed automatically.");
   process.exit(0);
 }

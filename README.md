@@ -32,7 +32,7 @@ pnpm worker:dev          # morning 8:30 report / EOD 5:00 Discord / overdue
 pnpm discord:bot         # optional keyword bot (needs DISCORD_BOT_TOKEN)
 ```
 
-Local seed creates a demo super admin — **change that password immediately** (especially in production). Credentials live only in your private `.env` / DB, never in `.env.example`.
+Local seed creates a single super admin. **Never use the default demo password in production** — set `SEED_PASSWORD` (12+ chars) and prefer `SEED_FORCE_PASSWORD_CHANGE=true`. Credentials live only in your private `.env` / DB, never in `.env.example`.
 
 Invite more people from **Team** — each invite is saved to the database and emailed login details automatically (requires SMTP in `.env`).
 
@@ -92,20 +92,39 @@ Real secrets belong only in the server `.env` (gitignored). Never put production
 
 ```bash
 # App + Postgres + Redis
+# NOTE: RUN_SEED defaults to false. Never set RUN_SEED=true on a live DB — seed truncates users/tasks.
 docker compose -f docker-compose.prod.yml up -d --build
 
-# Background jobs (reminders, overdue, daily summary)
+# Background jobs (reminders, overdue, daily summary) — required for morning 08:30 / EOD 17:00
 docker compose -f docker-compose.prod.yml --profile worker up -d --build
 
-# Optional Discord keyword bot
+# Optional Discord keyword bot — run EXACTLY ONE replica (Redis dedupes duplicate Gateway sessions)
 docker compose -f docker-compose.prod.yml --profile bot up -d --build
 ```
 
-App listens on `http://127.0.0.1:3000`. Seed once if needed:
+App listens on `http://127.0.0.1:3000` (put Nginx + TLS in front; the app assumes HTTPS via `X-Forwarded-Proto`).
+
+First-time empty database only — seed once, then set a strong password / rotate:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec app pnpm db:seed
+# Prefer explicit one-shot seed with a strong password (never leave password123 in prod)
+docker compose -f docker-compose.prod.yml exec \
+  -e SEED_PASSWORD='<strong-secret>' \
+  -e SEED_FORCE_PASSWORD_CHANGE=true \
+  app pnpm db:seed
 ```
+
+### 2b. Postgres backups
+
+Take logical dumps regularly (cron on the VPS):
+
+```bash
+cd /opt/dailytask
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  pg_dump -U dailyflow -d dailyflow -Fc > "/var/backups/dailytask-$(date +%F).dump"
+```
+
+Retain several days off-box. Test a restore on a staging volume before you need it.
 
 ### 3. Nginx (TLS reverse proxy)
 
@@ -134,7 +153,11 @@ Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other secur
 
 ### 4. Health check
 
-`GET /api/health` → `{ "status": "ok", "app": "Daily Task Managing System", "timestamp": "..." }`
+`GET /api/health` → probes Postgres (+ Redis status). HTTP **200** when DB is up (`status: "ok"` or `"degraded"` if Redis is down); **503** when Postgres is unreachable.
+
+```bash
+curl -fsS https://your-domain.com/api/health
+```
 
 Super Admin System Health UI: `/system-health` (role `super_admin` only in nav; then a separate ops unlock).
 JSON: `GET /api/admin/system-health` (session + super_admin + unlocked ops cookie).
@@ -253,13 +276,16 @@ pm2 save
 ## Security notes
 
 - Never commit `.env`
-- Rotate Discord bot token if it was ever shared
-- Use a strong unique `AUTH_SECRET` in production
+- Rotate Discord bot token / VPS passwords if they were ever shared in chat
+- Use a strong unique `AUTH_SECRET` in production; keep `AUTH_URL` = `NEXTAUTH_URL` = `APP_URL` (HTTPS)
 - Keep `ALLOW_PUBLIC_REGISTER=false` unless you intentionally want open signup
+- Keep `RUN_SEED=false` on live databases — seed **truncates** users/tasks
 - Configure SMTP before inviting users (invites roll back if email fails)
 - Rate limits (login/register/forgot/invite/profile/change-password/Discord/PDF/avatar/task-delete) use Redis when `REDIS_URL` is set
+- Auth.js uses Secure cookies in production (`useSecureCookies`) + `trustHost` behind Nginx
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
 - User queries never return `passwordHash` to the client (team list, settings, system health)
 - System Health (`/system-health`) is visible/usable only to `super_admin`, plus a separate DB-backed ops email/password/PIN gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
 - Ops credentials are stored hashed in `system_health_credentials`; lockouts require super-admin unblock or SQL — never commit real secrets
+- Discord bot: one replica; Redis claim keys prevent duplicate command replies
 - `.env.example` is a public empty template; real credentials go only in gitignored `.env`

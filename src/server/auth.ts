@@ -54,8 +54,19 @@ const credentialsSchema = z.object({
   password: z.string().min(6),
 });
 
+const isProd = process.env.NODE_ENV === "production";
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
+  // Required behind reverse proxies (Nginx/TLS) so Auth.js trusts AUTH_URL / Host.
+  trustHost: true,
+  // Force Secure session cookies in production (HTTPS assumed via reverse proxy).
+  useSecureCookies: isProd,
+  session: {
+    strategy: "jwt",
+    // 12h sliding JWT — short enough for shared workstations, long enough for a workday.
+    maxAge: 60 * 60 * 12,
+    updateAge: 60 * 30,
+  },
   pages: {
     signIn: "/login",
   },

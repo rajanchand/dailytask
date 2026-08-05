@@ -18,7 +18,8 @@ export function getRedisClient() {
       },
     });
     redis.on("error", (err) => {
-      console.warn("[redis]", err.message);
+      // Avoid noisy stack spam; rate-limit / workers soft-fail open when Redis is down.
+      console.warn(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "redis.error", error: err.message }));
     });
   }
   return redis;

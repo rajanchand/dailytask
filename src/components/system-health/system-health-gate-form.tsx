@@ -223,7 +223,7 @@ export function SystemHealthUnlockForm({
 
 export function SystemHealthBlockedPanel() {
   const [state, action, pending] = useActionState(
-    async (_prev: ActionState | undefined) => {
+    async () => {
       return unblockSystemHealthAction();
     },
     undefined,
@@ -271,7 +271,7 @@ SET locked = false,
 
 export function SystemHealthLockButton() {
   const [, action, pending] = useActionState(
-    async (_prev: { ok?: boolean } | undefined) => {
+    async () => {
       return lockSystemHealthAction();
     },
     undefined,

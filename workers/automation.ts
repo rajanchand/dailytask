@@ -452,6 +452,18 @@ async function main() {
 
   worker.on("completed", (job) => console.log(`[worker] Completed: ${job.name}`));
   worker.on("failed", (job, err) => console.error(`[worker] Failed: ${job?.name}`, err));
+  worker.on("error", (err) => console.error("[worker] Worker error", err));
+
+  function shutdown(signal: string) {
+    console.log(`[worker] ${signal} received — closing`);
+    void worker
+      .close()
+      .then(() => queue.close())
+      .then(() => connection.quit())
+      .finally(() => process.exit(0));
+  }
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   console.log("[worker] Dailyflow automation worker started");
 }
