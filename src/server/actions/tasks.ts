@@ -351,7 +351,7 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     typeof data.progress === "number" ? data.progress : existing.progress;
   if (nextStatus === "completed") {
     progress = Math.max(progress, 100);
-  } else if (existing.status === "completed" && nextStatus !== "completed") {
+  } else if (existing.status === "completed") {
     progress = Math.min(progress, 95);
   }
 
