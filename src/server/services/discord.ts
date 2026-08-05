@@ -165,7 +165,7 @@ export async function testDiscordWebhook(webhookUrl: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      content: "Dailytask Manager connected — Discord sync is working.",
+      content: "Daily Task Managing System connected — Discord sync is working.",
     }),
   });
   if (!res.ok) {

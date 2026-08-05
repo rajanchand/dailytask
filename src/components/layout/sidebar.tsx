@@ -125,7 +125,7 @@ export function Sidebar({ role }: { role: Role }) {
               <div className="truncate text-base font-bold tracking-tight text-foreground">
                 {APP_SHORT_NAME}
               </div>
-              <div className="truncate text-[11px] text-muted-foreground">Manager</div>
+              <div className="truncate text-[11px] text-muted-foreground">Managing System</div>
             </Link>
           )}
           <div className="flex items-center gap-1">

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { APP_NAME } from "@/lib/brand";
 
 function ResetForm() {
   const router = useRouter();
@@ -44,7 +45,7 @@ function ResetForm() {
   return (
     <Card>
       <CardHeader className="text-center">
-        <p className="text-2xl font-bold text-primary">Dailytask Manager</p>
+        <p className="text-2xl font-bold text-primary">{APP_NAME}</p>
         <CardTitle className="mt-2">Reset password</CardTitle>
         <CardDescription>Choose a new password for your account</CardDescription>
       </CardHeader>

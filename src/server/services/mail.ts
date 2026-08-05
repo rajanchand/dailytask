@@ -189,7 +189,7 @@ export async function sendInviteEmail(input: {
       Welcome to <strong>${escapeHtml(APP_NAME)}</strong> — you've been invited to join the team.
       Use the credentials below to get started.
     </p>
-    ${ctaButton(loginUrl, "Sign in to Dailytask Manager")}
+    ${ctaButton(loginUrl, `Sign in to ${APP_NAME}`)}
     <p style="margin:0 0 8px;font-size:13px;color:${MUTED};">
       Or open this link:<br/>
       <a href="${escapeHtml(loginUrl)}" style="color:${BRAND_TEAL_DARK};word-break:break-all;">${escapeHtml(loginUrl)}</a>
@@ -327,7 +327,7 @@ export async function sendPasswordChangedEmail(input: {
         </td>
       </tr>
     </table>
-    ${ctaButton(loginUrl, "Sign in to Dailytask Manager")}
+    ${ctaButton(loginUrl, `Sign in to ${APP_NAME}`)}
     <p style="margin:0 0 16px;font-size:13px;color:${MUTED};">
       Or open this link:<br/>
       <a href="${escapeHtml(loginUrl)}" style="color:${BRAND_TEAL_DARK};word-break:break-all;">${escapeHtml(loginUrl)}</a>

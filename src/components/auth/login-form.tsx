@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { APP_NAME } from "@/lib/brand";
 
 export function LoginForm({ allowRegister }: { allowRegister: boolean }) {
   const [state, action, pending] = useActionState(
@@ -20,7 +21,7 @@ export function LoginForm({ allowRegister }: { allowRegister: boolean }) {
   return (
     <Card>
       <CardHeader className="text-center">
-        <p className="text-2xl font-bold text-primary">Dailytask Manager</p>
+        <p className="text-2xl font-bold text-primary">{APP_NAME}</p>
         <CardTitle className="mt-2">Welcome back</CardTitle>
         <CardDescription>Sign in to manage your daily tasks</CardDescription>
       </CardHeader>

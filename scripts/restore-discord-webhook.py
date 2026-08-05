@@ -96,7 +96,7 @@ def main() -> None:
             "POST",
             f"/channels/{target_channel['id']}/webhooks",
             token,
-            {"name": "Dailytask"},
+            {"name": "Daily Task"},
         )
         print(f"created_webhook id={hook['id']}")
     else:
@@ -145,7 +145,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     data = json.dumps(
         {
             "content": (
-                "✅ Dailytask webhook restored — Send Report on /reports will post here."
+                "✅ Daily Task Managing System webhook restored — Send Report on /reports will post here."
             )
         }
     ).encode()

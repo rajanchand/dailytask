@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Dailytask Manager to a VPS via rsync + docker compose.
+# Deploy Daily Task Managing System to a VPS via rsync + docker compose.
 #
 # Required env:
 #   VPS_HOST   — e.g. 212.227.39.216

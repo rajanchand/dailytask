@@ -1,4 +1,4 @@
-# Dailytask Manager
+# Daily Task Managing System
 
 Production-ready daily task and team productivity app.
 
@@ -130,7 +130,7 @@ Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other secur
 
 ### 4. Health check
 
-`GET /api/health` → `{ "status": "ok", "app": "Dailytask Manager", "timestamp": "..." }`
+`GET /api/health` → `{ "status": "ok", "app": "Daily Task Managing System", "timestamp": "..." }`
 
 Super Admin System Health UI: `/system-health` (role `super_admin`, then a separate ops unlock).
 JSON: `GET /api/admin/system-health` (session + super_admin + unlocked ops cookie).

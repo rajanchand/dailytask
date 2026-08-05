@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { APP_NAME } from "@/lib/brand";
 
 type State = { ok?: boolean; message?: string; resetUrl?: string; error?: string };
 
@@ -32,7 +33,7 @@ export default function ForgotPasswordPage() {
   return (
     <Card>
       <CardHeader className="text-center">
-        <p className="text-2xl font-bold text-primary">Dailytask Manager</p>
+        <p className="text-2xl font-bold text-primary">{APP_NAME}</p>
         <CardTitle className="mt-2">Forgot password</CardTitle>
         <CardDescription>Enter your email to receive a reset link</CardDescription>
       </CardHeader>

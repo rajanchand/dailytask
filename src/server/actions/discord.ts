@@ -111,7 +111,7 @@ export async function testDiscordIntegrationAction() {
 
   // Fall back to bot channel send (same path as Send Report without webhook)
   const { sendDiscordWebhook } = await import("@/server/services/discord");
-  const sent = await sendDiscordWebhook(null, "dailySummary", "Dailytask Manager connected — Discord sync is working.", {
+  const sent = await sendDiscordWebhook(null, "dailySummary", "Daily Task Managing System connected — Discord sync is working.", {
     ignoreEventFilter: true,
   });
   if (!sent.ok) {

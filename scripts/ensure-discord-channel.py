@@ -109,7 +109,7 @@ def main() -> None:
         "POST",
         f"/channels/{channel_id}/messages",
         token,
-        {"content": "✅ Dailytask bot channel linked — Send Report will post here."},
+        {"content": "✅ Daily Task Managing System bot channel linked — Send Report will post here."},
     )
     if code not in (200, 201):
         raise SystemExit(f"cannot post to channel: {code} {msg}")
