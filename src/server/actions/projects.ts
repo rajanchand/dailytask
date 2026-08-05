@@ -123,11 +123,18 @@ export async function updateProjectAction(projectId: string, formData: FormData)
 
   revalidatePath("/projects");
   revalidatePath(`/projects/${projectId}`);
-  return { ok: true };
+  return { ok: true as const };
 }
 
 export async function deleteProjectAction(projectId: string) {
   const session = await requireUserPermission("projects.manage");
+  const [existing] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!existing) return { error: "Project not found" };
+
   await db
     .update(projects)
     .set({ archived: true, updatedAt: new Date() })
@@ -142,5 +149,5 @@ export async function deleteProjectAction(projectId: string) {
 
   revalidatePath("/projects");
   revalidatePath(`/projects/${projectId}`);
-  return { ok: true };
+  return { ok: true as const };
 }

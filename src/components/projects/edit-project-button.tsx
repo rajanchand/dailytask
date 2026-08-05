@@ -61,7 +61,7 @@ export function EditProjectButton({
     formData.set("color", color);
     startTransition(async () => {
       const result = await updateProjectAction(project.id, formData);
-      if (result?.error) toast.error(result.error);
+      if ("error" in result && result.error) toast.error(result.error);
       else {
         toast.success("Project updated");
         setOpen(false);

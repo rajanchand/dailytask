@@ -44,7 +44,7 @@ export function DeleteProjectButton({
 
     startTransition(async () => {
       const result = await deleteProjectAction(projectId);
-      if (result?.error) toast.error(result.error);
+      if ("error" in result && result.error) toast.error(result.error);
       else {
         toast.success("Project deleted");
         if (redirectToList) router.push("/projects");
