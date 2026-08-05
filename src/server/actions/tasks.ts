@@ -67,65 +67,6 @@ function formText(formData: FormData, key: string): string | null | undefined {
   return value || null;
 }
 
-async function spawnDailyOccurrence(
-  existing: typeof tasks.$inferSelect,
-  actorId: string,
-) {
-  if (existing.recurrence !== "daily" && !existing.dailyNotify) return;
-
-  const nextDate = format(addDays(parseISO(existing.date), 1), "yyyy-MM-dd");
-  const already = await db
-    .select({ id: tasks.id })
-    .from(tasks)
-    .where(
-      and(
-        eq(tasks.title, existing.title),
-        eq(tasks.date, nextDate),
-        existing.assigneeId
-          ? eq(tasks.assigneeId, existing.assigneeId)
-          : eq(tasks.createdById, existing.createdById),
-        existing.projectId
-          ? eq(tasks.projectId, existing.projectId)
-          : eq(tasks.createdById, existing.createdById),
-      ),
-    )
-    .limit(1);
-  if (already.length) return;
-
-  const nextDueAt = existing.dueTime ? new Date(`${nextDate}T${existing.dueTime}:00`) : null;
-  const nextId = newId();
-  await db.insert(tasks).values({
-    id: nextId,
-    title: existing.title,
-    description: existing.description,
-    notes: existing.notes,
-    date: nextDate,
-    startTime: existing.startTime,
-    dueTime: existing.dueTime,
-    dueAt: nextDueAt,
-    priority: existing.priority,
-    status: "not_started",
-    progress: 0,
-    assigneeId: existing.assigneeId,
-    createdById: existing.createdById,
-    projectId: existing.projectId,
-    categoryId: existing.categoryId,
-    teamId: existing.teamId,
-    recurrence: existing.recurrence === "none" ? "daily" : existing.recurrence,
-    recurrenceRule: existing.recurrenceRule,
-    dailyNotify: existing.dailyNotify || existing.recurrence === "daily",
-    sortOrder: existing.sortOrder,
-  });
-  await logActivity({
-    userId: actorId,
-    action: "task.recurrence_spawned",
-    entityType: "task",
-    entityId: nextId,
-    taskId: nextId,
-    details: { fromTaskId: existing.id, date: nextDate, title: existing.title },
-  });
-}
-
 function revalidateTaskPaths(projectId?: string | null) {
   revalidatePath("/dashboard");
   revalidatePath("/tasks");
@@ -412,10 +353,7 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
       "taskCompleted",
       `✅ **Task completed**\n${data.title ?? existing.title}`,
     );
-    await spawnDailyOccurrence(
-      { ...existing, status: nextStatus, date: data.date ?? existing.date },
-      session.user.id,
-    );
+    // Daily / project checklist tasks are reset by the morning worker — no spawn.
   } else if (nextStatus !== existing.status) {
     await sendDiscordWebhook(
       existing.teamId,
@@ -482,7 +420,7 @@ export async function updateTaskStatusAction(taskId: string, status: TaskStatus)
       "taskCompleted",
       `✅ **Task completed**\n${existing.title}`,
     );
-    await spawnDailyOccurrence(existing, session.user.id);
+    // Daily / project checklist tasks are reset by the morning worker — no spawn.
   } else {
     await sendDiscordWebhook(
       existing.teamId,

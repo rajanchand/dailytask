@@ -81,7 +81,7 @@ export const users = pgTable("users", {
       taskAssigned: true,
       taskCompleted: true,
       dailySummary: true,
-      emailEnabled: false,
+      emailEnabled: true,
       inAppEnabled: true,
     }),
   resetToken: text("reset_token"),
