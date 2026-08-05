@@ -28,7 +28,11 @@ type ActionState = {
 export function SystemHealthSetupForm() {
   const [state, action, pending] = useActionState(
     async (_prev: ActionState | undefined, formData: FormData) => {
-      return setupSystemHealthAction(formData);
+      const result = await setupSystemHealthAction(formData);
+      if (result.ok) {
+        window.dispatchEvent(new Event("system-health-unlocked"));
+      }
+      return result;
     },
     undefined,
   );
@@ -120,6 +124,9 @@ export function SystemHealthUnlockForm({
       const result = await unlockSystemHealthAction(formData);
       if (result.offerPin) setStep("pin");
       if (result.locked) setStep("password");
+      if (result.ok) {
+        window.dispatchEvent(new Event("system-health-unlocked"));
+      }
       return result;
     },
     undefined,
@@ -127,7 +134,11 @@ export function SystemHealthUnlockForm({
 
   const [pinState, pinAction, pinPending] = useActionState(
     async (_prev: ActionState | undefined, formData: FormData) => {
-      return unlockSystemHealthWithPinAction(formData);
+      const result = await unlockSystemHealthWithPinAction(formData);
+      if (result.ok) {
+        window.dispatchEvent(new Event("system-health-unlocked"));
+      }
+      return result;
     },
     undefined,
   );

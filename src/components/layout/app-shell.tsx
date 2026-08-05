@@ -1,6 +1,7 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { IdleTimeoutGuard } from "@/components/idle-timeout-guard";
 import { getUnreadNotificationCount } from "@/server/actions/notifications";
 import type { Role } from "@/server/db/schema";
 
@@ -19,6 +20,7 @@ export async function AppShell({ user, children }: AppShellProps) {
 
   return (
     <div className="flex min-h-screen bg-app">
+      <IdleTimeoutGuard isSuperAdmin={user.role === "super_admin"} />
       <Sidebar role={user.role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar user={user} unreadCount={unreadCount} />
