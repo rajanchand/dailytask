@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { users } from "@/server/db/schema";
 import type { Role } from "@/server/db/schema";
+import { recordLoginSession } from "@/server/services/login-sessions";
 
 declare module "next-auth" {
   interface Session {
@@ -17,6 +18,8 @@ declare module "next-auth" {
       role: Role;
       timezone: string;
       mustChangePassword: boolean;
+      /** App login session row id (for logout telemetry). */
+      loginSessionId?: string | null;
     };
   }
 
@@ -24,6 +27,7 @@ declare module "next-auth" {
     role: Role;
     timezone: string;
     mustChangePassword: boolean;
+    loginSessionId?: string | null;
   }
 }
 
@@ -36,6 +40,7 @@ type AuthToken = {
   picture?: string | null;
   sub?: string;
   mustChangePassword?: boolean;
+  loginSessionId?: string | null;
 };
 
 const credentialsSchema = z.object({
@@ -70,6 +75,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const valid = await compare(parsed.data.password, user.passwordHash);
         if (!valid) return null;
 
+        let loginSessionId: string | null = null;
+        try {
+          loginSessionId = await recordLoginSession(user.id);
+        } catch (err) {
+          console.error("[auth] failed to record login session", err);
+        }
+
         return {
           id: user.id,
           name: user.name,
@@ -78,6 +90,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: user.role,
           timezone: user.timezone,
           mustChangePassword: user.mustChangePassword,
+          loginSessionId,
         };
       },
     }),
@@ -93,6 +106,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.name = user.name;
         t.email = user.email;
         t.picture = user.image;
+        t.loginSessionId = user.loginSessionId ?? null;
       }
       if (trigger === "update" && session) {
         t.name = session.name ?? t.name;
@@ -114,6 +128,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (t.email) session.user.email = t.email;
         session.user.image = t.picture;
         session.user.mustChangePassword = Boolean(t.mustChangePassword);
+        session.user.loginSessionId = t.loginSessionId ?? null;
       }
       return session;
     },

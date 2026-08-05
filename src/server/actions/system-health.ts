@@ -12,8 +12,10 @@ import {
   tasks,
   teams,
   users,
+  userSessions,
 } from "@/server/db/schema";
 import { requireSuperAdmin } from "@/server/session";
+import { requireSystemHealthGate } from "@/server/system-health-gate";
 import { pingRedis } from "@/server/security/redis";
 import { APP_NAME } from "@/lib/brand";
 
@@ -23,6 +25,7 @@ const querySchema = z
   .object({
     activityLimit: z.coerce.number().int().min(1).max(50).optional(),
     usersLimit: z.coerce.number().int().min(1).max(200).optional(),
+    sessionsLimit: z.coerce.number().int().min(1).max(200).optional(),
   })
   .strict();
 
@@ -78,6 +81,7 @@ function formatBytes(n: number) {
 
 export async function getSystemHealthAction(input?: unknown) {
   await requireSuperAdmin();
+  await requireSystemHealthGate();
 
   const parsed = querySchema.safeParse(input ?? {});
   if (!parsed.success) {
@@ -86,6 +90,7 @@ export async function getSystemHealthAction(input?: unknown) {
 
   const activityLimit = parsed.data.activityLimit ?? 25;
   const usersLimit = parsed.data.usersLimit ?? 100;
+  const sessionsLimit = parsed.data.sessionsLimit ?? 100;
 
   const collectedAt = new Date().toISOString();
   let database: {
@@ -98,6 +103,7 @@ export async function getSystemHealthAction(input?: unknown) {
       tasks: number;
       projects: number;
       notifications: number;
+      sessions: number;
     };
   };
 
@@ -110,6 +116,9 @@ export async function getSystemHealthAction(input?: unknown) {
     const [notificationCount] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications);
+    const [sessionCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(userSessions);
 
     database = {
       ok: true,
@@ -120,6 +129,7 @@ export async function getSystemHealthAction(input?: unknown) {
         tasks: Number(taskCount?.count ?? 0),
         projects: Number(projectCount?.count ?? 0),
         notifications: Number(notificationCount?.count ?? 0),
+        sessions: Number(sessionCount?.count ?? 0),
       },
     };
   } catch (err) {
@@ -128,7 +138,14 @@ export async function getSystemHealthAction(input?: unknown) {
       ok: false,
       latencyMs: null,
       error: "Database unreachable",
-      counts: { users: 0, teams: 0, tasks: 0, projects: 0, notifications: 0 },
+      counts: {
+        users: 0,
+        teams: 0,
+        tasks: 0,
+        projects: 0,
+        notifications: 0,
+        sessions: 0,
+      },
     };
   }
 
@@ -202,6 +219,28 @@ export async function getSystemHealthAction(input?: unknown) {
         .limit(activityLimit)
     : [];
 
+  const sessions = database.ok
+    ? await db
+        .select({
+          id: userSessions.id,
+          userId: userSessions.userId,
+          userName: users.name,
+          userEmail: users.email,
+          ipAddress: userSessions.ipAddress,
+          userAgent: userSessions.userAgent,
+          browser: userSessions.browser,
+          device: userSessions.device,
+          status: userSessions.status,
+          loginAt: userSessions.loginAt,
+          lastSeenAt: userSessions.lastSeenAt,
+          logoutAt: userSessions.logoutAt,
+        })
+        .from(userSessions)
+        .leftJoin(users, eq(userSessions.userId, users.id))
+        .orderBy(desc(userSessions.loginAt))
+        .limit(sessionsLimit)
+    : [];
+
   const authUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || process.env.APP_URL || null;
 
   return {
@@ -223,6 +262,7 @@ export async function getSystemHealthAction(input?: unknown) {
     },
     host,
     users: userRows,
+    sessions,
     activity,
   };
 }

@@ -141,6 +141,16 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function logoutAction() {
+  try {
+    const session = await auth();
+    const loginSessionId = session?.user?.loginSessionId;
+    if (loginSessionId) {
+      const { markSessionLoggedOut } = await import("@/server/services/login-sessions");
+      await markSessionLoggedOut(loginSessionId);
+    }
+  } catch (err) {
+    console.error("[auth] logout session update failed", err);
+  }
   await signOut({ redirectTo: "/login" });
 }
 

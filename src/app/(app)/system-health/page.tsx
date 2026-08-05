@@ -1,9 +1,17 @@
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
 import { auth } from "@/server/auth";
 import { isSuperAdmin } from "@/server/rbac";
 import type { Role } from "@/server/db/schema";
 import { AccessDenied } from "@/components/access-denied";
 import { getSystemHealthAction } from "@/server/actions/system-health";
+import {
+  isSystemHealthGateConfigured,
+  readSystemHealthGate,
+} from "@/server/system-health-gate";
+import {
+  SystemHealthLockButton,
+  SystemHealthUnlockForm,
+} from "@/components/system-health/system-health-gate-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ROLE_LABELS } from "@/lib/utils";
@@ -36,10 +44,58 @@ function formatUptime(sec: number) {
   return `${m}m`;
 }
 
+function formatWhen(d: Date | null | undefined) {
+  if (!d) return "—";
+  return `${format(d, "dd MMM yyyy HH:mm")} (${formatDistanceToNow(d, { addSuffix: true })})`;
+}
+
+function sessionStatusVariant(status: string) {
+  if (status === "active") return "success" as const;
+  if (status === "logged_out") return "outline" as const;
+  return "warning" as const;
+}
+
 export default async function SystemHealthPage() {
   const session = await auth();
   if (!session?.user || !isSuperAdmin(session.user.role as Role)) {
     return <AccessDenied title="Super Admin access required" />;
+  }
+
+  if (!isSystemHealthGateConfigured()) {
+    return (
+      <div className="space-y-4 animate-fade-up">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Ops gate is not configured on this server.
+          </p>
+        </div>
+        <Card>
+          <CardContent className="py-6 text-sm text-muted-foreground">
+            Set <code className="text-foreground">SYSTEM_HEALTH_EMAIL</code> and{" "}
+            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD</code> (or{" "}
+            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD_HASH</code>) in the environment,
+            then restart the app.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const gate = await readSystemHealthGate();
+  if (!gate.unlocked) {
+    return (
+      <div className="space-y-6 animate-fade-up">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Additional credentials required — this view exposes sensitive session and database
+            telemetry.
+          </p>
+        </div>
+        <SystemHealthUnlockForm />
+      </div>
+    );
   }
 
   const health = await getSystemHealthAction();
@@ -52,16 +108,20 @@ export default async function SystemHealthPage() {
     { label: "Teams", value: String(health.database.counts.teams) },
     { label: "Tasks", value: String(health.database.counts.tasks) },
     { label: "Projects", value: String(health.database.counts.projects) },
-    { label: "Notifications", value: String(health.database.counts.notifications) },
+    { label: "Sessions", value: String(health.database.counts.sessions) },
   ];
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Super Admin diagnostics — no secrets or credentials are shown.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">System Health</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Ops-unlocked diagnostics — no secrets or credentials are shown. Unlock expires after 30
+            minutes.
+          </p>
+        </div>
+        <SystemHealthLockButton />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -166,6 +226,71 @@ export default async function SystemHealthPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Login sessions</CardTitle>
+          <CardDescription>
+            IP, browser, login/logout times, and status (captured on sign-in / sign-out)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="px-4 py-3 text-left font-medium">User</th>
+                  <th className="px-4 py-3 text-left font-medium">IP</th>
+                  <th className="px-4 py-3 text-left font-medium">Browser</th>
+                  <th className="px-4 py-3 text-left font-medium">Device</th>
+                  <th className="px-4 py-3 text-left font-medium">Login</th>
+                  <th className="px-4 py-3 text-left font-medium">Last logout</th>
+                  <th className="px-4 py-3 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {health.sessions.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      No login sessions recorded yet. New sign-ins will appear here.
+                    </td>
+                  </tr>
+                )}
+                {health.sessions.map((row) => (
+                  <tr key={row.id} className="border-b border-border/60">
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{row.userName ?? "Unknown"}</div>
+                      <div className="text-xs text-muted-foreground">{row.userEmail ?? "—"}</div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
+                      {row.ipAddress ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>{row.browser ?? "—"}</div>
+                      <div
+                        className="max-w-[14rem] truncate text-xs text-muted-foreground"
+                        title={row.userAgent ?? undefined}
+                      >
+                        {row.userAgent ?? ""}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.device ?? "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                      {formatWhen(row.loginAt)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                      {formatWhen(row.logoutAt)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={sessionStatusVariant(row.status)}>{row.status}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

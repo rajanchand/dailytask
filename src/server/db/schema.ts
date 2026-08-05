@@ -306,6 +306,37 @@ export const activityLogs = pgTable(
   (t) => [index("activity_logs_created_idx").on(t.createdAt)],
 );
 
+export const sessionStatusEnum = pgEnum("session_status", [
+  "active",
+  "logged_out",
+  "expired",
+]);
+
+/** Login / security telemetry for System Health (IP, UA, logout times). */
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    browser: text("browser"),
+    device: text("device"),
+    status: sessionStatusEnum("status").notNull().default("active"),
+    loginAt: timestamp("login_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    logoutAt: timestamp("logout_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("user_sessions_user_idx").on(t.userId),
+    index("user_sessions_login_idx").on(t.loginAt),
+    index("user_sessions_status_idx").on(t.status),
+  ],
+);
+
 export const dailySummaries = pgTable(
   "daily_summaries",
   {

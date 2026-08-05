@@ -28,7 +28,7 @@ pnpm db:seed
 
 # 4. Run
 pnpm dev                 # http://localhost:3000
-pnpm worker:dev          # reminders / overdue / daily summary
+pnpm worker:dev          # morning 8:30 report / EOD 5:00 Discord / overdue
 pnpm discord:bot         # optional keyword bot (needs DISCORD_BOT_TOKEN)
 ```
 
@@ -128,7 +128,12 @@ Obtain certs with Certbot, then reload Nginx. The app sends HSTS and other secur
 
 `GET /api/health` → `{ "status": "ok", "app": "Dailytask Manager", "timestamp": "..." }`
 
-Super Admin System Health UI: `/system-health` (role `super_admin` only). JSON: `GET /api/admin/system-health` (session + super_admin).
+Super Admin System Health UI: `/system-health` (role `super_admin`, then a separate ops unlock).
+JSON: `GET /api/admin/system-health` (session + super_admin + unlocked ops cookie).
+
+System Health is gated: after signing in as super admin, open `/system-health` and enter
+`SYSTEM_HEALTH_EMAIL` + `SYSTEM_HEALTH_PASSWORD` (or bcrypt `SYSTEM_HEALTH_PASSWORD_HASH`).
+A short-lived httpOnly cookie unlocks diagnostics (DB metrics, login sessions with IP/UA/logout).
 
 ### 5. Production DB inspection (Docker Postgres)
 
@@ -234,4 +239,5 @@ pm2 save
 - Rate limits (login/register/forgot/invite/profile/change-password/Discord/PDF/avatar/task-delete) use Redis when `REDIS_URL` is set
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
 - User queries never return `passwordHash` to the client (team list, settings, system health)
-- System Health (`/system-health`) is `super_admin` only and never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
+- System Health (`/system-health`) requires `super_admin` **plus** a separate ops email/password gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
+- Configure `SYSTEM_HEALTH_EMAIL` / `SYSTEM_HEALTH_PASSWORD` (or `SYSTEM_HEALTH_PASSWORD_HASH`) on the server only — never commit real values
