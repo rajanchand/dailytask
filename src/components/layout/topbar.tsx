@@ -23,6 +23,7 @@ const pageTitles: Record<string, string> = {
   "/discord": "Discord",
   "/settings": "Settings",
   "/activity": "Activity",
+  "/system-health": "System Health",
 };
 
 type TopbarProps = {

@@ -6,10 +6,11 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 import { db } from "@/server/db";
-import { users, teamMembers, teams } from "@/server/db/schema";
+import { users, teamMembers, teams, type Role } from "@/server/db/schema";
 import { signIn, signOut, auth } from "@/server/auth";
 import { newId } from "@/lib/utils";
 import { requireSession, requireUserPermission } from "@/server/session";
+import { isSuperAdmin } from "@/server/rbac";
 import { revalidatePath } from "next/cache";
 import { randomBytes } from "crypto";
 import { rateLimitAction } from "@/server/security/rate-limit";
@@ -21,6 +22,20 @@ import {
 } from "@/server/services/mail";
 import { createNotification } from "@/server/services/activity";
 import { isPublicRegisterAllowed } from "@/server/auth-flags";
+
+/** Non–super-admins cannot change role, disable, or remove a super_admin. */
+async function assertCanManageTargetUser(actorRole: Role, targetUserId: string) {
+  const [target] = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(eq(users.id, targetUserId))
+    .limit(1);
+  if (!target) throw new Error("User not found");
+  if (isSuperAdmin(target.role) && !isSuperAdmin(actorRole)) {
+    throw new Error("Forbidden");
+  }
+  return target;
+}
 
 async function notifyPasswordChanged(user: {
   id: string;
@@ -462,7 +477,8 @@ export async function inviteMemberAction(formData: FormData) {
 }
 
 export async function updateMemberRoleAction(userId: string, role: string) {
-  await requireUserPermission("users.manage");
+  const session = await requireUserPermission("users.manage");
+  await assertCanManageTargetUser(session.user.role as Role, userId);
   const parsed = inviteSchema.shape.role.safeParse(role);
   if (!parsed.success) {
     throw new Error("Invalid role");
@@ -475,13 +491,15 @@ export async function updateMemberRoleAction(userId: string, role: string) {
 }
 
 export async function setMemberDisabledAction(userId: string, disabled: boolean) {
-  await requireUserPermission("users.manage");
+  const session = await requireUserPermission("users.manage");
+  await assertCanManageTargetUser(session.user.role as Role, userId);
   await db.update(users).set({ disabled, updatedAt: new Date() }).where(eq(users.id, userId));
   revalidatePath("/team");
 }
 
 export async function removeMemberAction(userId: string) {
-  await requireUserPermission("users.manage");
+  const session = await requireUserPermission("users.manage");
+  await assertCanManageTargetUser(session.user.role as Role, userId);
   await db.delete(teamMembers).where(eq(teamMembers.userId, userId));
   await db.update(users).set({ disabled: true, updatedAt: new Date() }).where(eq(users.id, userId));
   revalidatePath("/team");

@@ -16,6 +16,12 @@ export type Permission =
   | "audit.view"
   | "system.health";
 
+/** Permissions only super_admin receives (Discord webhook settings, System Health). */
+export const SUPER_ADMIN_ONLY_PERMISSIONS: readonly Permission[] = [
+  "discord.manage",
+  "system.health",
+] as const;
+
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   super_admin: [
     "users.manage",
@@ -33,6 +39,7 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "audit.view",
     "system.health",
   ],
+  // Admin keeps team/user/settings management — not Discord or System Health.
   admin: [
     "users.manage",
     "teams.manage",

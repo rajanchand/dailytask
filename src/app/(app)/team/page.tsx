@@ -5,7 +5,7 @@ import {
   removeMemberAction,
 } from "@/server/actions/auth";
 import { auth } from "@/server/auth";
-import { hasPermission } from "@/server/rbac";
+import { hasPermission, isSuperAdmin } from "@/server/rbac";
 import type { Role } from "@/server/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,9 @@ import { InviteMemberForm } from "@/components/team/invite-member-form";
 export default async function TeamPage() {
   const session = await auth();
   const { team, members } = await getTeamMembers();
-  const canManage = session?.user && hasPermission(session.user.role as Role, "users.manage");
+  const actorRole = session?.user?.role as Role | undefined;
+  const canManage = !!actorRole && hasPermission(actorRole, "users.manage");
+  const actorIsSuperAdmin = isSuperAdmin(actorRole);
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -31,6 +33,10 @@ export default async function TeamPage() {
           <div className="divide-y divide-border">
             {members.map((member) => {
               const initials = member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+              const canManageMember =
+                canManage &&
+                member.id !== session?.user?.id &&
+                (actorIsSuperAdmin || !isSuperAdmin(member.role));
               return (
                 <div key={member.id} className="flex flex-wrap items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
                   <div className="flex items-center gap-3">
@@ -51,7 +57,7 @@ export default async function TeamPage() {
                       )}
                     </span>
                     {member.disabled && <Badge variant="danger">Disabled</Badge>}
-                    {canManage && member.id !== session?.user?.id && (
+                    {canManageMember && (
                       <TeamMemberActions
                         userId={member.id}
                         role={member.role}

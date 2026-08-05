@@ -57,7 +57,6 @@ const secondaryNav: NavItem[] = [
     permission: "discord.manage",
     superAdminOnly: true,
   },
-
   { href: "/activity", label: "Activity", icon: Activity, permission: "audit.view" },
   {
     href: "/system-health",
@@ -75,6 +74,7 @@ export function Sidebar({ role }: { role: Role }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const manageItems = secondaryNav.filter((item) => {
+    // Discord + System Health: hide for everyone except super_admin
     if (item.superAdminOnly && !isSuperAdmin(role)) return false;
     if (item.permission && !hasPermission(role, item.permission)) return false;
     return true;
