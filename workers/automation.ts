@@ -6,14 +6,18 @@ import { format, addDays } from "date-fns";
 import { db } from "../src/server/db";
 import { tasks, users, dailySummaries, reminders } from "../src/server/db/schema";
 import { createNotification, logActivity } from "../src/server/services/activity";
-import { sendDiscordWebhook, formatDailySummaryDiscord } from "../src/server/services/discord";
+import { sendDiscordWebhook } from "../src/server/services/discord";
 import { newId, todayISO } from "../src/lib/utils";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
 const QUEUE_NAME = "dailyflow-automation";
-const MORNING_REMINDER_LOCAL_HOUR = 8;
+/** Local morning report: 08:30–08:44 (worker ticks every 15 minutes). */
+const MORNING_REPORT_LOCAL_HOUR = 8;
+const MORNING_REPORT_LOCAL_MINUTE_START = 30;
+/** Local EOD Discord/update: 17:00–17:14. */
+const EOD_SUMMARY_LOCAL_HOUR = 17;
 
 /** Local wall-clock hour (0–23) in the given IANA timezone. Falls back to UTC on invalid zones. */
 function localHourInTimezone(date: Date, timeZone: string): number {
@@ -34,6 +38,35 @@ function localHourInTimezone(date: Date, timeZone: string): number {
   }
 }
 
+/** Local wall-clock minute (0–59) in the given IANA timezone. */
+function localMinuteInTimezone(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timeZone || "UTC",
+      minute: "numeric",
+    }).formatToParts(date);
+    return Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  } catch {
+    return date.getUTCMinutes();
+  }
+}
+
+function isLocalMorningReportWindow(now: Date, timeZone: string) {
+  const hour = localHourInTimezone(now, timeZone);
+  const minute = localMinuteInTimezone(now, timeZone);
+  return (
+    hour === MORNING_REPORT_LOCAL_HOUR &&
+    minute >= MORNING_REPORT_LOCAL_MINUTE_START &&
+    minute < MORNING_REPORT_LOCAL_MINUTE_START + 15
+  );
+}
+
+function isLocalEodWindow(now: Date, timeZone: string) {
+  const hour = localHourInTimezone(now, timeZone);
+  const minute = localMinuteInTimezone(now, timeZone);
+  return hour === EOD_SUMMARY_LOCAL_HOUR && minute < 15;
+}
+
 /** Calendar date YYYY-MM-DD in the user's timezone (en-CA → ISO-like). */
 function todayISOInTimezone(timeZone: string, date = new Date()): string {
   try {
@@ -49,50 +82,62 @@ function todayISOInTimezone(timeZone: string, date = new Date()): string {
 }
 
 async function morningReminderJob() {
-  console.log("[worker] Running morning reminder (local hour filter)...");
+  console.log("[worker] Running morning task report (08:30 local window)...");
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
   for (const user of allUsers) {
     if (user.notificationPrefs?.morningReminder === false) continue;
-    if (user.notificationPrefs?.inAppEnabled === false) continue;
 
     const tz = user.timezone?.trim() || "UTC";
-    if (localHourInTimezone(now, tz) !== MORNING_REMINDER_LOCAL_HOUR) continue;
+    if (!isLocalMorningReportWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
     const dayTasks = await db
       .select()
       .from(tasks)
-      .where(
-        and(
-          eq(tasks.assigneeId, user.id),
-          eq(tasks.date, today),
-          ne(tasks.status, "completed"),
-          ne(tasks.status, "cancelled"),
-        ),
-      );
+      .where(and(eq(tasks.assigneeId, user.id), eq(tasks.date, today)));
 
-    if (dayTasks.length === 0) continue;
+    const open = dayTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+    const completed = dayTasks.filter((t) => t.status === "completed");
+    const inProgress = dayTasks.filter((t) =>
+      ["in_progress", "working_on_it", "review"].includes(t.status),
+    );
+    const pending = dayTasks.filter((t) =>
+      ["not_started", "waiting", "blocked"].includes(t.status),
+    );
+    const overdue = dayTasks.filter((t) => t.isOverdue && t.status !== "completed");
 
-    const titles = dayTasks
-      .slice(0, 5)
-      .map((t) => `• ${t.title}`)
-      .join("\n");
-    const more = dayTasks.length > 5 ? `\n…and ${dayTasks.length - 5} more` : "";
+    const openLines = open.length
+      ? open
+          .slice(0, 10)
+          .map((t, i) => `${i + 1}. ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`)
+          .join("\n")
+      : "None — clear calendar.";
+    const more = open.length > 10 ? `\n…and ${open.length - 10} more` : "";
 
-    await createNotification({
-      userId: user.id,
-      type: "morning_reminder",
-      title: "Good morning! Your plan for today",
-      body: `You have ${dayTasks.length} task${dayTasks.length !== 1 ? "s" : ""} assigned for today.\n${titles}${more}`,
-      link: "/planner",
-    });
+    const reportBody = [
+      `Today · ${today}`,
+      `total ${dayTasks.length}  ·  done ${completed.length}  ·  active ${inProgress.length}  ·  pending ${pending.length}  ·  overdue ${overdue.length}`,
+      "",
+      "Your tasks",
+      openLines + more,
+    ].join("\n");
+
+    if (user.notificationPrefs?.inAppEnabled !== false) {
+      await createNotification({
+        userId: user.id,
+        type: "morning_reminder",
+        title: "Morning task report · 8:30",
+        body: `You have ${open.length} open task${open.length !== 1 ? "s" : ""} today (${completed.length} already done).`,
+        link: "/planner",
+      });
+    }
 
     await sendDiscordWebhook(
       null,
       "morningReminder",
-      `🌅 **Morning Reminder — ${user.name}**\n${dayTasks.length} tasks today\n${titles}${more}`,
+      `Morning report · ${user.name}\n${reportBody}`,
     );
   }
 }
@@ -228,19 +273,24 @@ async function overdueMarkJob() {
 }
 
 async function eodSummaryJob() {
-  console.log("[worker] Running EOD summary...");
-  const today = todayISO();
+  console.log("[worker] Running EOD summary (17:00 local window)...");
+  const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
   for (const user of allUsers) {
     if (user.notificationPrefs?.dailySummary === false) continue;
 
+    const tz = user.timezone?.trim() || "UTC";
+    if (!isLocalEodWindow(now, tz)) continue;
+
+    const today = todayISOInTimezone(tz, now);
     const dayTasks = await db
       .select()
       .from(tasks)
       .where(and(eq(tasks.assigneeId, user.id), eq(tasks.date, today)));
 
-    const completed = dayTasks.filter((t) => t.status === "completed").length;
+    const completedTasks = dayTasks.filter((t) => t.status === "completed");
+    const completed = completedTasks.length;
     const inProgress = dayTasks.filter((t) =>
       ["in_progress", "working_on_it", "review"].includes(t.status),
     ).length;
@@ -280,25 +330,41 @@ async function eodSummaryJob() {
       });
     }
 
-    await createNotification({
-      userId: user.id,
-      type: "daily_summary",
-      title: "Daily Summary",
-      body: `📊 Daily Summary: ${completed}/${total} completed. ${remaining.length} remaining.`,
-      link: "/dashboard",
-    });
+    const doneList = completedTasks.length
+      ? completedTasks
+          .slice(0, 12)
+          .map((t) => `- ${t.title}`)
+          .join("\n")
+      : "- none completed yet";
+
+    if (user.notificationPrefs?.inAppEnabled !== false) {
+      await createNotification({
+        userId: user.id,
+        type: "daily_summary",
+        title: "End of day summary · 5:00 PM",
+        body: `${completed}/${total} completed (${completionRate}%). ${remaining.length} still open.`,
+        link: "/dashboard",
+      });
+    }
 
     await sendDiscordWebhook(
       null,
       "dailySummary",
-      formatDailySummaryDiscord({
-        userName: user.name,
-        date: format(new Date(), "EEEE, d MMMM yyyy"),
-        completed,
-        inProgress,
-        pending,
-        remaining: remaining.map((t) => t.title),
-      }),
+      [
+        `EOD · ${user.name} · ${today}`,
+        `done ${completed}  ·  active ${inProgress}  ·  pending ${pending}  ·  overdue ${overdue}  ·  ${completionRate}%`,
+        "",
+        "Work completed",
+        doneList,
+        "",
+        "Still open",
+        remaining.length
+          ? remaining
+              .slice(0, 8)
+              .map((t) => `- ${t.title}`)
+              .join("\n")
+          : "- none",
+      ].join("\n"),
     );
   }
 }
@@ -312,19 +378,21 @@ const jobHandlers: Record<string, () => Promise<void>> = {
 };
 
 async function setupRepeatableJobs(queue: Queue) {
-  // Morning reminder: hourly; job sends only when users.timezone local hour is 08:00.
+  // Morning 8:30 + EOD 5:00 are timezone-aware; worker ticks every 15 minutes.
   const schedulers = [
-    { id: "morning-reminder", pattern: "0 * * * *" },
+    { id: "morning-reminder", pattern: "*/15 * * * *" },
     { id: "tomorrow-preview", pattern: "0 20 * * *" },
     { id: "deadline-check", pattern: "*/15 * * * *" },
     { id: "overdue-mark", pattern: "0 * * * *" },
-    { id: "eod-summary", pattern: "0 18 * * *" },
+    { id: "eod-summary", pattern: "*/15 * * * *" },
   ] as const;
 
   for (const { id, pattern } of schedulers) {
     await queue.upsertJobScheduler(id, { pattern }, { name: id, data: {} });
   }
-  console.log("[worker] Repeatable jobs scheduled");
+  console.log(
+    "[worker] Repeatable jobs scheduled (morning ~08:30 local, EOD ~17:00 local, every 15m tick)",
+  );
 }
 
 async function main() {

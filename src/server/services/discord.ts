@@ -146,7 +146,11 @@ export async function sendDiscordWebhook(
   }
 
   // No webhook row — still allow report/automation delivery via bot channel.
-  if (options.ignoreEventFilter || event === "dailySummary") {
+  if (
+    options.ignoreEventFilter ||
+    event === "dailySummary" ||
+    event === "morningReminder"
+  ) {
     return postViaBot(content);
   }
 
