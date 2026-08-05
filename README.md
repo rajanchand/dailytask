@@ -20,7 +20,7 @@ docker compose up -d
 # 2. Install
 pnpm install
 cp .env.example .env
-# Set AUTH_SECRET: openssl rand -base64 48
+# Fill DATABASE_URL, REDIS_URL, AUTH_SECRET, etc. Never commit `.env`.
 
 # 3. Database
 pnpm db:push
@@ -32,7 +32,7 @@ pnpm worker:dev          # morning 8:30 report / EOD 5:00 Discord / overdue
 pnpm discord:bot         # optional keyword bot (needs DISCORD_BOT_TOKEN)
 ```
 
-**Super admin login:** `rajanchand@zero-trust-security.org` / `password123`
+Local seed creates a demo super admin — **change that password immediately** (especially in production). Credentials live only in your private `.env` / DB, never in `.env.example`.
 
 Invite more people from **Team** — each invite is saved to the database and emailed login details automatically (requires SMTP in `.env`).
 
@@ -68,15 +68,19 @@ AUTH_URL=https://your-domain.com
 NEXTAUTH_URL=https://your-domain.com
 APP_URL=https://your-domain.com
 ALLOW_PUBLIC_REGISTER=false
-MAIL_FROM=noreply@zero-trust-security.org
-SMTP_HOST=...
+MAIL_FROM=
+SMTP_HOST=
 SMTP_PORT=587
-SMTP_USER=...
-SMTP_PASS=...
+SMTP_USER=
+SMTP_PASS=
+SYSTEM_HEALTH_EMAIL=
+SYSTEM_HEALTH_PASSWORD_HASH=
 # optional
 DISCORD_BOT_TOKEN=
 POSTGRES_PASSWORD=<strong-password>
 ```
+
+Real secrets belong only in the server `.env` (gitignored). Never put production passwords or tokens in `.env.example` or commit them.
 
 `DATABASE_URL` / `REDIS_URL` inside Compose are overridden to point at the `postgres` and `redis` services.
 
@@ -132,8 +136,9 @@ Super Admin System Health UI: `/system-health` (role `super_admin`, then a separ
 JSON: `GET /api/admin/system-health` (session + super_admin + unlocked ops cookie).
 
 System Health is gated: after signing in as super admin, open `/system-health` and enter
-`SYSTEM_HEALTH_EMAIL` + `SYSTEM_HEALTH_PASSWORD` (or bcrypt `SYSTEM_HEALTH_PASSWORD_HASH`).
-A short-lived httpOnly cookie unlocks diagnostics (DB metrics, login sessions with IP/UA/logout).
+`SYSTEM_HEALTH_EMAIL` + the ops password whose bcrypt hash is `SYSTEM_HEALTH_PASSWORD_HASH`
+(or plaintext `SYSTEM_HEALTH_PASSWORD` if you must). A short-lived httpOnly cookie unlocks
+diagnostics (DB metrics, login sessions with IP/UA/logout).
 
 ### 5. Production DB inspection (Docker Postgres)
 
@@ -240,4 +245,5 @@ pm2 save
 - Security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, CSP, and HSTS
 - User queries never return `passwordHash` to the client (team list, settings, system health)
 - System Health (`/system-health`) requires `super_admin` **plus** a separate ops email/password gate; never exposes `DATABASE_URL`, `SMTP_PASS`, or `DISCORD_BOT_TOKEN`
-- Configure `SYSTEM_HEALTH_EMAIL` / `SYSTEM_HEALTH_PASSWORD` (or `SYSTEM_HEALTH_PASSWORD_HASH`) on the server only — never commit real values
+- Configure `SYSTEM_HEALTH_EMAIL` / `SYSTEM_HEALTH_PASSWORD_HASH` (preferred) on the server only — never commit real values
+- `.env.example` is a public empty template; real credentials go only in gitignored `.env`

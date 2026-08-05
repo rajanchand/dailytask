@@ -73,8 +73,8 @@ export default async function SystemHealthPage() {
         <Card>
           <CardContent className="py-6 text-sm text-muted-foreground">
             Set <code className="text-foreground">SYSTEM_HEALTH_EMAIL</code> and{" "}
-            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD</code> (or{" "}
-            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD_HASH</code>) in the environment,
+            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD_HASH</code> (or{" "}
+            <code className="text-foreground">SYSTEM_HEALTH_PASSWORD</code>) in the environment,
             then restart the app.
           </CardContent>
         </Card>
