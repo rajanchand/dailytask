@@ -49,16 +49,32 @@ const taskSchema = z.object({
   projectId: z.string().optional().nullable(),
   categoryId: z.string().optional().nullable(),
   recurrence: z.enum(["none", "daily", "weekly", "monthly", "custom"]).default("none"),
+  dailyNotify: z.boolean().default(false),
   tagNames: z.string().optional(),
 });
 
-function revalidateTaskPaths() {
+function parseDailyNotify(formData: FormData, recurrence?: string) {
+  const values = formData.getAll("dailyNotify").map(String);
+  const checked = values.includes("true") || values.includes("on") || values.includes("1");
+  // Daily recurrence always implies morning notify.
+  return checked || recurrence === "daily";
+}
+
+/** Form empty string → null so optional FK columns stay valid. */
+function formText(formData: FormData, key: string): string | null | undefined {
+  if (!formData.has(key)) return undefined;
+  const value = String(formData.get(key) ?? "").trim();
+  return value || null;
+}
+
+function revalidateTaskPaths(projectId?: string | null) {
   revalidatePath("/dashboard");
   revalidatePath("/tasks");
   revalidatePath("/planner");
   revalidatePath("/kanban");
   revalidatePath("/calendar");
   revalidatePath("/projects");
+  if (projectId) revalidatePath(`/projects/${projectId}`);
   revalidatePath("/analytics");
   revalidatePath("/notifications");
   revalidatePath("/reports");
@@ -101,20 +117,22 @@ async function notifyAssignee(input: {
 
 export async function createTaskAction(formData: FormData) {
   const session = await requireUserPermission("tasks.create");
+  const recurrence = (formData.get("recurrence") as string) || "none";
   const parsed = taskSchema.safeParse({
     title: formData.get("title"),
     description: formData.get("description") || undefined,
     notes: formData.get("notes") || undefined,
     date: formData.get("date"),
-    startTime: formData.get("startTime") || null,
-    dueTime: formData.get("dueTime") || null,
+    startTime: formText(formData, "startTime") ?? null,
+    dueTime: formText(formData, "dueTime") ?? null,
     priority: formData.get("priority") || "medium",
     status: formData.get("status") || "not_started",
     progress: formData.get("progress") || undefined,
-    assigneeId: String(formData.get("assigneeId") ?? "") || null,
-    projectId: String(formData.get("projectId") ?? "") || null,
-    categoryId: String(formData.get("categoryId") ?? "") || null,
-    recurrence: formData.get("recurrence") || "none",
+    assigneeId: formText(formData, "assigneeId"),
+    projectId: formText(formData, "projectId"),
+    categoryId: formText(formData, "categoryId"),
+    recurrence,
+    dailyNotify: parseDailyNotify(formData, recurrence),
     tagNames: formData.get("tagNames") || "",
   });
 
@@ -148,12 +166,13 @@ export async function createTaskAction(formData: FormData) {
     dueAt,
     priority: parsed.data.priority,
     status: parsed.data.status,
-    progress,
+    progress: parsed.data.status === "completed" ? 100 : progress,
     assigneeId,
     createdById: session.user.id,
     projectId: parsed.data.projectId,
     categoryId: parsed.data.categoryId,
     recurrence: parsed.data.recurrence,
+    dailyNotify: parsed.data.dailyNotify,
     completedAt: parsed.data.status === "completed" ? new Date() : null,
   });
 
@@ -194,7 +213,7 @@ export async function createTaskAction(formData: FormData) {
     `🆕 **New task**\n${parsed.data.title}\n📅 ${parsed.data.date}`,
   );
 
-  revalidateTaskPaths();
+  revalidateTaskPaths(parsed.data.projectId);
   return { ok: true, id: taskId };
 }
 
@@ -207,27 +226,59 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     return { error: "Forbidden" };
   }
 
+  const recurrence =
+    (formData.get("recurrence") as string) || existing.recurrence;
+  const nextProjectId =
+    formText(formData, "projectId") === undefined
+      ? existing.projectId
+      : formText(formData, "projectId");
+  const nextCategoryId =
+    formText(formData, "categoryId") === undefined
+      ? existing.categoryId
+      : formText(formData, "categoryId");
+  const nextAssigneeRaw =
+    formText(formData, "assigneeId") === undefined
+      ? existing.assigneeId
+      : formText(formData, "assigneeId");
+  const nextStartTime =
+    formText(formData, "startTime") === undefined
+      ? existing.startTime
+      : formText(formData, "startTime");
+  const nextDueTime =
+    formText(formData, "dueTime") === undefined
+      ? existing.dueTime
+      : formText(formData, "dueTime");
+
   const parsed = taskSchema.partial({ title: true }).safeParse({
     title: formData.get("title") || existing.title,
     description: formData.get("description") ?? existing.description,
     notes: formData.get("notes") ?? existing.notes,
     date: formData.get("date") || existing.date,
-    startTime: formData.get("startTime") ?? existing.startTime,
-    dueTime: formData.get("dueTime") ?? existing.dueTime,
+    startTime: nextStartTime,
+    dueTime: nextDueTime,
     priority: formData.get("priority") || existing.priority,
     status: formData.get("status") || existing.status,
     progress: formData.get("progress") ?? existing.progress,
-    assigneeId: formData.get("assigneeId") ?? existing.assigneeId,
-    projectId: formData.get("projectId") ?? existing.projectId,
-    categoryId: formData.get("categoryId") ?? existing.categoryId,
-    recurrence: formData.get("recurrence") || existing.recurrence,
+    assigneeId: nextAssigneeRaw,
+    projectId: nextProjectId,
+    categoryId: nextCategoryId,
+    recurrence,
+    dailyNotify:
+      formData.getAll("dailyNotify").length > 0
+        ? parseDailyNotify(formData, recurrence)
+        : existing.dailyNotify || recurrence === "daily",
   });
 
   if (!parsed.success) return { error: "Invalid task data" };
 
   const data = parsed.data;
+  const nextStatus = (data.status as TaskStatus) ?? existing.status;
   const dueAt =
-    data.date && data.dueTime ? new Date(`${data.date}T${data.dueTime}:00`) : existing.dueAt;
+    data.date && data.dueTime
+      ? new Date(`${data.date}T${data.dueTime}:00`)
+      : data.dueTime === null
+        ? null
+        : existing.dueAt;
 
   let nextAssignee = existing.assigneeId;
   if (data.assigneeId !== undefined && data.assigneeId !== existing.assigneeId) {
@@ -237,37 +288,45 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     nextAssignee = data.assigneeId;
   }
 
-  const progress =
-    data.progress ??
-    (data.status === "completed" ? 100 : existing.progress);
+  let progress =
+    typeof data.progress === "number" ? data.progress : existing.progress;
+  if (nextStatus === "completed") {
+    progress = Math.max(progress, 100);
+  } else if (existing.status === "completed") {
+    progress = Math.min(progress, 95);
+  }
 
-  await db
-    .update(tasks)
-    .set({
-      title: data.title ?? existing.title,
-      description: data.description,
-      notes: data.notes,
-      date: data.date ?? existing.date,
-      startTime: data.startTime,
-      dueTime: data.dueTime,
-      dueAt,
-      priority: (data.priority as TaskPriority) ?? existing.priority,
-      status: (data.status as TaskStatus) ?? existing.status,
-      progress: typeof progress === "number" ? progress : existing.progress,
-      assigneeId: nextAssignee,
-      projectId: data.projectId,
-      categoryId: data.categoryId,
-      recurrence: data.recurrence ?? existing.recurrence,
-      completedAt:
-        data.status === "completed"
-          ? existing.completedAt ?? new Date()
-          : data.status
-            ? null
-            : existing.completedAt,
-      isOverdue: false,
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId));
+  try {
+    await db
+      .update(tasks)
+      .set({
+        title: data.title ?? existing.title,
+        description: data.description,
+        notes: data.notes,
+        date: data.date ?? existing.date,
+        startTime: data.startTime,
+        dueTime: data.dueTime,
+        dueAt,
+        priority: (data.priority as TaskPriority) ?? existing.priority,
+        status: nextStatus,
+        progress,
+        assigneeId: nextAssignee,
+        projectId: nextProjectId ?? null,
+        categoryId: nextCategoryId ?? null,
+        recurrence: data.recurrence ?? existing.recurrence,
+        dailyNotify: data.dailyNotify ?? existing.dailyNotify,
+        completedAt:
+          nextStatus === "completed"
+            ? existing.completedAt ?? new Date()
+            : null,
+        isOverdue: nextStatus === "completed" ? false : existing.isOverdue,
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, taskId));
+  } catch (err) {
+    console.error("updateTaskAction failed", err);
+    return { error: "Could not save task. Check project and assignee fields." };
+  }
 
   await logActivity({
     userId: session.user.id,
@@ -275,7 +334,7 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     entityType: "task",
     entityId: taskId,
     taskId,
-    details: { title: data.title },
+    details: { title: data.title, status: nextStatus },
   });
 
   if (nextAssignee && nextAssignee !== existing.assigneeId) {
@@ -288,7 +347,22 @@ export async function updateTaskAction(taskId: string, formData: FormData) {
     });
   }
 
-  revalidateTaskPaths();
+  if (nextStatus === "completed" && existing.status !== "completed") {
+    await sendDiscordWebhook(
+      existing.teamId,
+      "taskCompleted",
+      `✅ **Task completed**\n${data.title ?? existing.title}`,
+    );
+    // Daily / project checklist tasks are reset by the morning worker — no spawn.
+  } else if (nextStatus !== existing.status) {
+    await sendDiscordWebhook(
+      existing.teamId,
+      "statusChanged",
+      `🔄 **Status changed**\n${data.title ?? existing.title}: ${existing.status} → ${nextStatus}`,
+    );
+  }
+
+  revalidateTaskPaths(nextProjectId ?? existing.projectId);
   return { ok: true };
 }
 
@@ -301,18 +375,28 @@ export async function updateTaskStatusAction(taskId: string, status: TaskStatus)
     return { error: "Forbidden" };
   }
 
-  const progress = status === "completed" ? 100 : Math.max(existing.progress, progressFromStatus(status));
+  if (existing.status === status) return { ok: true };
 
-  await db
-    .update(tasks)
-    .set({
-      status,
-      progress,
-      completedAt: status === "completed" ? new Date() : null,
-      isOverdue: status === "completed" ? false : existing.isOverdue,
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId));
+  const progress =
+    status === "completed"
+      ? 100
+      : Math.max(existing.progress, progressFromStatus(status));
+
+  try {
+    await db
+      .update(tasks)
+      .set({
+        status,
+        progress,
+        completedAt: status === "completed" ? new Date() : null,
+        isOverdue: status === "completed" ? false : existing.isOverdue,
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, taskId));
+  } catch (err) {
+    console.error("updateTaskStatusAction failed", err);
+    return { error: "Could not update status. Please try again." };
+  }
 
   await logActivity({
     userId: session.user.id,
@@ -336,6 +420,7 @@ export async function updateTaskStatusAction(taskId: string, status: TaskStatus)
       "taskCompleted",
       `✅ **Task completed**\n${existing.title}`,
     );
+    // Daily / project checklist tasks are reset by the morning worker — no spawn.
   } else {
     await sendDiscordWebhook(
       existing.teamId,
@@ -344,7 +429,7 @@ export async function updateTaskStatusAction(taskId: string, status: TaskStatus)
     );
   }
 
-  revalidateTaskPaths();
+  revalidateTaskPaths(existing.projectId);
   return { ok: true };
 }
 

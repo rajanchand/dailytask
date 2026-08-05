@@ -1,6 +1,6 @@
 "use server";
 
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/server/db";
@@ -15,6 +15,16 @@ const projectSchema = z.object({
   color: z.string().optional(),
   teamId: z.string().optional().nullable(),
 });
+
+export async function getProjectById(projectId: string) {
+  await requireSession();
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.archived, false)))
+    .limit(1);
+  return project ?? null;
+}
 
 export async function getProjects() {
   await requireSession();
@@ -112,11 +122,19 @@ export async function updateProjectAction(projectId: string, formData: FormData)
   });
 
   revalidatePath("/projects");
-  return { ok: true };
+  revalidatePath(`/projects/${projectId}`);
+  return { ok: true as const };
 }
 
 export async function deleteProjectAction(projectId: string) {
   const session = await requireUserPermission("projects.manage");
+  const [existing] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!existing) return { error: "Project not found" };
+
   await db
     .update(projects)
     .set({ archived: true, updatedAt: new Date() })
@@ -130,5 +148,6 @@ export async function deleteProjectAction(projectId: string) {
   });
 
   revalidatePath("/projects");
-  return { ok: true };
+  revalidatePath(`/projects/${projectId}`);
+  return { ok: true as const };
 }

@@ -29,6 +29,7 @@ import {
 } from "@/server/actions/tasks";
 import { canAssignTask, canDeleteTask, canUpdateTask } from "@/server/task-access";
 import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
+import { EditTaskButton } from "@/components/tasks/edit-task-button";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { Progress } from "@/components/ui/progress";
 import type { Role, TaskStatus } from "@/server/db/schema";
@@ -36,13 +37,27 @@ import type { Role, TaskStatus } from "@/server/db/schema";
 type Task = {
   id: string;
   title: string;
+  description?: string | null;
+  notes?: string | null;
+  date: string;
   priority: string;
   status: string;
   progress?: number | null;
   assigneeId?: string | null;
   createdById: string;
+  projectId?: string | null;
+  categoryId?: string | null;
+  recurrence?: string | null;
+  dailyNotify?: boolean | null;
   assigneeName?: string | null;
   dueTime?: string | null;
+  startTime?: string | null;
+};
+
+type FormOptions = {
+  users: { id: string; name: string; email: string }[];
+  projects: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
 };
 
 type Access = {
@@ -67,10 +82,12 @@ const collisionDetection: CollisionDetection = (args) => {
 function KanbanCard({
   task,
   users,
+  options,
   access,
 }: {
   task: Task;
   users: UserOption[];
+  options: FormOptions;
   access: Access;
 }) {
   const router = useRouter();
@@ -138,9 +155,18 @@ function KanbanCard({
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex items-start justify-between gap-1">
             <p className="text-sm font-medium leading-snug">{task.title}</p>
-            {canDelete && (
-              <DeleteTaskButton taskId={task.id} taskTitle={task.title} />
-            )}
+            <div className="flex shrink-0 items-center">
+              {canEdit && (
+                <EditTaskButton
+                  task={task}
+                  options={options}
+                  canDelete={canDelete}
+                />
+              )}
+              {canDelete && (
+                <DeleteTaskButton taskId={task.id} taskTitle={task.title} />
+              )}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <PriorityBadge priority={task.priority} />
@@ -209,11 +235,13 @@ function Column({
   status,
   tasks,
   users,
+  options,
   access,
 }: {
   status: string;
   tasks: Task[];
   users: UserOption[];
+  options: FormOptions;
   access: Access;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -238,7 +266,13 @@ function Column({
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <div className="flex min-h-[280px] flex-1 flex-col gap-2 p-3">
           {tasks.map((task) => (
-            <KanbanCard key={task.id} task={task} users={users} access={access} />
+            <KanbanCard
+              key={task.id}
+              task={task}
+              users={users}
+              options={options}
+              access={access}
+            />
           ))}
           {tasks.length === 0 && (
             <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
@@ -254,10 +288,12 @@ function Column({
 export function KanbanBoard({
   initialTasks,
   users,
+  options,
   access,
 }: {
   initialTasks: Task[];
   users: UserOption[];
+  options: FormOptions;
   access: Access;
 }) {
   const router = useRouter();
@@ -353,7 +389,14 @@ export function KanbanBoard({
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
           {columns.map(({ status, tasks: colTasks }) => (
-            <Column key={status} status={status} tasks={colTasks} users={users} access={access} />
+            <Column
+              key={status}
+              status={status}
+              tasks={colTasks}
+              users={users}
+              options={options}
+              access={access}
+            />
           ))}
         </div>
         <DragOverlay>

@@ -4,11 +4,11 @@ import { TaskCard } from "@/components/tasks/task-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { getDashboardStats, getTasks } from "@/server/actions/tasks";
+import { getDashboardStats, getTasks, getTaskFormOptions } from "@/server/actions/tasks";
 import { EodSummaryActions } from "@/components/dashboard/eod-summary-actions";
 import { getRecentActivity } from "@/server/actions/activity";
 import { tomorrowISO, formatDisplayDate } from "@/lib/utils";
-import { canDeleteTask } from "@/server/task-access";
+import { canDeleteTask, canUpdateTask } from "@/server/task-access";
 import { hasPermission } from "@/server/rbac";
 import type { Role } from "@/server/db/schema";
 import Link from "next/link";
@@ -19,11 +19,18 @@ export default async function DashboardPage() {
   const stats = await getDashboardStats();
   const role = stats.user.role as Role;
   const canCreate = hasPermission(role, "tasks.create");
-  const [tomorrowTasks, overdueTasks, activity] = await Promise.all([
+  const [tomorrowTasks, overdueTasks, activity, formOptions] = await Promise.all([
     getTasks({ date: tomorrowISO(), assignedToMe: true }),
     getTasks({ overdue: true, assignedToMe: true }),
     getRecentActivity(8),
+    getTaskFormOptions(),
   ]);
+
+  const taskFormOptions = {
+    users: formOptions.users,
+    projects: formOptions.projects.map((p) => ({ id: p.id, name: p.name })),
+    categories: formOptions.categories.map((c) => ({ id: c.id, name: c.name })),
+  };
 
   const remaining = stats.tasks.filter(
     (t) => t.status !== "completed" && t.status !== "cancelled",
@@ -90,7 +97,8 @@ export default async function DashboardPage() {
                 <TaskCard
                   key={task.id}
                   task={task}
-                  href="/planner"
+                  options={taskFormOptions}
+                  canEdit={canUpdateTask(role, stats.user.id, task)}
                   canDelete={canDeleteTask(role, stats.user.id, task)}
                 />
               ))}

@@ -27,9 +27,12 @@ type TaskFormProps = {
     projectId?: string;
     categoryId?: string;
     recurrence?: string;
+    dailyNotify?: boolean;
     tagNames?: string;
     progress?: number;
   };
+  /** When set, project select is locked to this project (e.g. project detail page). */
+  lockProjectId?: string;
   submitLabel?: string;
   pending?: boolean;
   onDelete?: () => void;
@@ -41,10 +44,13 @@ const selectClass =
 export function TaskForm({
   options,
   defaultValues = {},
+  lockProjectId,
   submitLabel = "Save Task",
   pending,
   onDelete,
 }: TaskFormProps) {
+  const projectIdDefault = lockProjectId ?? defaultValues.projectId ?? "";
+
   return (
     <div className="grid gap-4 max-h-[70vh] overflow-y-auto pr-1">
       <div className="grid gap-2">
@@ -103,6 +109,22 @@ export function TaskForm({
           </select>
         </div>
       </div>
+      <label className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm">
+        <input type="hidden" name="dailyNotify" value="false" />
+        <input
+          type="checkbox"
+          name="dailyNotify"
+          value="true"
+          defaultChecked={defaultValues.dailyNotify ?? defaultValues.recurrence === "daily"}
+          className="mt-0.5 h-4 w-4 rounded border-border"
+        />
+        <span>
+          <span className="font-medium">Daily notify</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Get a morning reminder every day for this task (also applies when Recurrence is Daily).
+          </span>
+        </span>
+      </label>
       <div className="grid gap-2">
         <Label htmlFor="assigneeId">Assign To</Label>
         <select id="assigneeId" name="assigneeId" className={selectClass} defaultValue={defaultValues.assigneeId ?? ""}>
@@ -127,12 +149,24 @@ export function TaskForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="grid gap-2">
           <Label htmlFor="projectId">Project</Label>
-          <select id="projectId" name="projectId" className={selectClass} defaultValue={defaultValues.projectId ?? ""}>
-            <option value="">None</option>
-            {options.projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          {lockProjectId ? (
+            <>
+              <input type="hidden" name="projectId" value={lockProjectId} />
+              <Input
+                id="projectId"
+                readOnly
+                value={options.projects.find((p) => p.id === lockProjectId)?.name ?? "This project"}
+                className="bg-muted"
+              />
+            </>
+          ) : (
+            <select id="projectId" name="projectId" className={selectClass} defaultValue={projectIdDefault}>
+              <option value="">None</option>
+              {options.projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="grid gap-2">
           <Label htmlFor="categoryId">Category</Label>

@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Progress } from "@/components/ui/progress";
 import { TaskForm } from "@/components/tasks/task-form";
 import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
+import { EditTaskButton } from "@/components/tasks/edit-task-button";
 import { PriorityBadge } from "@/components/tasks/priority-badge";
 import { StatusBadge } from "@/components/tasks/status-badge";
 import {
@@ -27,6 +28,7 @@ type Task = {
   id: string;
   title: string;
   description?: string | null;
+  notes?: string | null;
   date: string;
   startTime?: string | null;
   dueTime?: string | null;
@@ -36,6 +38,10 @@ type Task = {
   isOverdue?: boolean;
   assigneeId?: string | null;
   createdById: string;
+  projectId?: string | null;
+  categoryId?: string | null;
+  recurrence?: string | null;
+  dailyNotify?: boolean | null;
   assigneeName?: string | null;
   projectName?: string | null;
 };
@@ -196,6 +202,16 @@ export function PlannerClient({
                       <h3 className="font-semibold">{task.title}</h3>
                       <StatusBadge status={task.status} />
                       <PriorityBadge priority={task.priority} />
+                      {canEdit && (
+                        <EditTaskButton
+                          task={task}
+                          options={options}
+                          canDelete={canDelete}
+                          variant="outline"
+                          size="sm"
+                          label="Edit"
+                        />
+                      )}
                       {canDelete && (
                         <DeleteTaskButton
                           taskId={task.id}

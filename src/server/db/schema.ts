@@ -81,7 +81,7 @@ export const users = pgTable("users", {
       taskAssigned: true,
       taskCompleted: true,
       dailySummary: true,
-      emailEnabled: false,
+      emailEnabled: true,
       inAppEnabled: true,
     }),
   resetToken: text("reset_token"),
@@ -170,6 +170,8 @@ export const tasks = pgTable(
       until?: string;
       time?: string;
     }>(),
+    /** When true (or recurrence is daily), morning worker notifies every day. */
+    dailyNotify: boolean("daily_notify").notNull().default(false),
     progress: integer("progress").notNull().default(0),
     isOverdue: boolean("is_overdue").notNull().default(false),
     completedAt: timestamp("completed_at", { withTimezone: true }),

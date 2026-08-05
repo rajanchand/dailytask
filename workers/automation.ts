@@ -1,12 +1,24 @@
 import "dotenv/config";
 import { Worker, Queue } from "bullmq";
 import IORedis from "ioredis";
-import { and, eq, lte, ne, isNotNull } from "drizzle-orm";
+import { and, eq, lte, ne, isNotNull, or } from "drizzle-orm";
 import { format, addDays } from "date-fns";
 import { db } from "../src/server/db";
-import { tasks, users, dailySummaries, reminders, calendarEntries } from "../src/server/db/schema";
+import {
+  tasks,
+  users,
+  dailySummaries,
+  reminders,
+  calendarEntries,
+  projects,
+} from "../src/server/db/schema";
 import { createNotification, logActivity } from "../src/server/services/activity";
 import { sendDiscordWebhook } from "../src/server/services/discord";
+import {
+  sendMorningTaskEmail,
+  sendPendingTasksEmail,
+  type DigestTaskLine,
+} from "../src/server/services/mail";
 import { newId, todayISO } from "../src/lib/utils";
 import { logger } from "../src/server/logger";
 
@@ -82,8 +94,195 @@ function todayISOInTimezone(timeZone: string, date = new Date()): string {
   }
 }
 
+function wantsEmail(user: typeof users.$inferSelect) {
+  return user.notificationPrefs?.emailEnabled !== false;
+}
+
+function toDigestLine(task: {
+  title: string;
+  priority?: string | null;
+  status?: string | null;
+  dueTime?: string | null;
+  projectName?: string | null;
+}): DigestTaskLine {
+  return {
+    title: task.title,
+    priority: task.priority,
+    status: task.status,
+    dueTime: task.dueTime,
+    projectName: task.projectName,
+  };
+}
+
+function formatTaskLine(
+  task: { title: string; dueTime?: string | null; projectName?: string | null; daily?: boolean },
+  index: number,
+) {
+  const bits = [
+    task.projectName ? `[${task.projectName}]` : null,
+    task.dueTime ? `due ${task.dueTime}` : null,
+    task.daily ? "🔁" : null,
+  ].filter(Boolean);
+  return `${index}. ${task.title}${bits.length ? ` (${bits.join(" · ")})` : ""}`;
+}
+
+const WEEKDAY_NAMES = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
+/** Parse project name like "Monday" / "monday checklist" → 0–6 (Sun–Sat), else null. */
+function weekdayIndexFromProjectName(name: string | null | undefined): number | null {
+  if (!name) return null;
+  const normalized = name.trim().toLowerCase();
+  const exact = WEEKDAY_NAMES.indexOf(normalized as (typeof WEEKDAY_NAMES)[number]);
+  if (exact >= 0) return exact;
+  for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
+    if (normalized === WEEKDAY_NAMES[i] || normalized.startsWith(`${WEEKDAY_NAMES[i]} `)) {
+      return i;
+    }
+  }
+  return null;
+}
+
+function weekdayIndexFromISODate(isoDate: string): number {
+  // Parse as UTC noon to avoid TZ edge cases on the calendar date string.
+  const d = new Date(`${isoDate}T12:00:00.000Z`);
+  return d.getUTCDay();
+}
+
+/** Next calendar date (YYYY-MM-DD) for target weekday on or after `fromISO`. */
+function dateOnOrAfterWeekday(fromISO: string, targetWeekday: number): string {
+  const from = new Date(`${fromISO}T12:00:00.000Z`);
+  const delta = (targetWeekday - from.getUTCDay() + 7) % 7;
+  return format(addDays(from, delta), "yyyy-MM-dd");
+}
+
+/**
+ * Every morning: bring daily / project checklist tasks back for today.
+ * Same rows are reused (no duplicates) — date → today, status → not_started.
+ *
+ * Weekday-named projects (Monday…Friday) only reset on that weekday; other
+ * days are parked on the next matching weekday so they do not flood "today".
+ */
+async function ensureDailyTasksForToday(userId: string, today: string) {
+  const dailyTasks = await db
+    .select({
+      task: tasks,
+      projectName: projects.name,
+    })
+    .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(tasks.assigneeId, userId),
+        ne(tasks.status, "cancelled"),
+        or(eq(tasks.dailyNotify, true), eq(tasks.recurrence, "daily")),
+      ),
+    );
+
+  const todayWeekday = weekdayIndexFromISODate(today);
+  let resetCount = 0;
+  let parkedCount = 0;
+
+  for (const row of dailyTasks) {
+    const task = row.task;
+    const projectWeekday = weekdayIndexFromProjectName(row.projectName);
+
+    // Weekday project for a different day → keep on next matching weekday.
+    if (projectWeekday !== null && projectWeekday !== todayWeekday) {
+      const onOrAfter = dateOnOrAfterWeekday(today, projectWeekday);
+      const finalPark =
+        onOrAfter > today
+          ? onOrAfter
+          : format(addDays(new Date(`${today}T12:00:00.000Z`), 7), "yyyy-MM-dd");
+
+      if (
+        task.date !== finalPark ||
+        task.status === "completed" ||
+        task.isOverdue
+      ) {
+        await db
+          .update(tasks)
+          .set({
+            date: finalPark,
+            status: "not_started",
+            progress: 0,
+            completedAt: null,
+            isOverdue: false,
+            dueAt: task.dueTime ? new Date(`${finalPark}T${task.dueTime}:00`) : null,
+            dailyNotify: true,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, task.id));
+        parkedCount += 1;
+      }
+      continue;
+    }
+
+    // Everyday daily task, or weekday project matching today → reset for today.
+    if (task.date === today && task.status !== "completed") {
+      if (!task.dailyNotify) {
+        await db
+          .update(tasks)
+          .set({ dailyNotify: true, updatedAt: new Date() })
+          .where(eq(tasks.id, task.id));
+      }
+      continue;
+    }
+
+    if (task.date <= today || task.status === "completed") {
+      await db
+        .update(tasks)
+        .set({
+          date: today,
+          status: "not_started",
+          progress: 0,
+          completedAt: null,
+          isOverdue: false,
+          dueAt: task.dueTime ? new Date(`${today}T${task.dueTime}:00`) : null,
+          dailyNotify: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(tasks.id, task.id));
+      resetCount += 1;
+    }
+  }
+
+  if (resetCount > 0 || parkedCount > 0) {
+    logger.info("worker.daily_tasks.reset", { userId, today, resetCount, parkedCount });
+  }
+}
+
+async function loadUserDayTasks(userId: string, today: string) {
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      priority: tasks.priority,
+      dueTime: tasks.dueTime,
+      isOverdue: tasks.isOverdue,
+      dailyNotify: tasks.dailyNotify,
+      recurrence: tasks.recurrence,
+      projectId: tasks.projectId,
+      projectName: projects.name,
+      date: tasks.date,
+    })
+    .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .where(and(eq(tasks.assigneeId, userId), eq(tasks.date, today)));
+}
+
+const FORCE_RUN = process.argv.includes("--force");
+
 async function morningReminderJob() {
-  logger.info("worker.job.start", { job: "morning-reminder" });
+  logger.info("worker.job.start", { job: "morning-reminder", force: FORCE_RUN });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -91,14 +290,12 @@ async function morningReminderJob() {
     if (user.notificationPrefs?.morningReminder === false) continue;
 
     const tz = user.timezone?.trim() || "UTC";
-    if (!isLocalMorningReportWindow(now, tz)) continue;
+    if (!FORCE_RUN && !isLocalMorningReportWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
-    const dayTasks = await db
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.assigneeId, user.id), eq(tasks.date, today)));
+    await ensureDailyTasksForToday(user.id, today);
 
+    const dayTasks = await loadUserDayTasks(user.id, today);
     const open = dayTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
     const completed = dayTasks.filter((t) => t.status === "completed");
     const inProgress = dayTasks.filter((t) =>
@@ -108,29 +305,48 @@ async function morningReminderJob() {
       ["not_started", "waiting", "blocked"].includes(t.status),
     );
     const overdue = dayTasks.filter((t) => t.isOverdue && t.status !== "completed");
+    const dailyFlagged = open.filter((t) => t.dailyNotify || t.recurrence === "daily");
+    const projectTasks = open.filter((t) => Boolean(t.projectId));
 
     const openLines = open.length
       ? open
-          .slice(0, 10)
-          .map((t, i) => `${i + 1}. ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`)
+          .slice(0, 25)
+          .map((t, i) =>
+            formatTaskLine(
+              {
+                title: t.title,
+                dueTime: t.dueTime,
+                projectName: t.projectName,
+                daily: Boolean(t.dailyNotify || t.recurrence === "daily"),
+              },
+              i + 1,
+            ),
+          )
           .join("\n")
       : "None — clear calendar.";
-    const more = open.length > 10 ? `\n…and ${open.length - 10} more` : "";
+    const more = open.length > 25 ? `\n…and ${open.length - 25} more` : "";
 
     const reportBody = [
       `Today · ${today}`,
+      `All today's tasks are listed in your projects — please complete them on time.`,
       `total ${dayTasks.length}  ·  done ${completed.length}  ·  active ${inProgress.length}  ·  pending ${pending.length}  ·  overdue ${overdue.length}`,
+      projectTasks.length ? `in projects ${projectTasks.length}` : null,
+      dailyFlagged.length ? `daily checklist ${dailyFlagged.length}` : null,
       "",
       "Your tasks",
       openLines + more,
-    ].join("\n");
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
 
     if (user.notificationPrefs?.inAppEnabled !== false) {
       await createNotification({
         userId: user.id,
         type: "morning_reminder",
-        title: "Morning task report · 8:30",
-        body: `You have ${open.length} open task${open.length !== 1 ? "s" : ""} today (${completed.length} already done).`,
+        title: "Morning tasks · please complete on time",
+        body: `Today's ${open.length} task${open.length !== 1 ? "s" : ""} are listed in your projects. Please complete them on time${
+          projectTasks.length ? ` (${projectTasks.length} in projects)` : ""
+        }.`,
         link: "/planner",
       });
     }
@@ -138,8 +354,26 @@ async function morningReminderJob() {
     await sendDiscordWebhook(
       null,
       "morningReminder",
-      `Morning report · ${user.name}\n${reportBody}`,
+      `🌅 Morning report · ${user.name}\n${reportBody}`,
     );
+
+    if (wantsEmail(user) && user.email) {
+      try {
+        const result = await sendMorningTaskEmail({
+          to: user.email,
+          name: user.name,
+          date: today,
+          tasks: open.map(toDigestLine),
+        });
+        if ("skipped" in result && result.skipped) {
+          logger.warn("worker.morning.email_skipped", { userId: user.id, reason: result.reason });
+        } else {
+          logger.info("worker.morning.email_sent", { userId: user.id, count: open.length });
+        }
+      } catch (err) {
+        logger.error("worker.morning.email_failed", { userId: user.id, err });
+      }
+    }
   }
 }
 
@@ -307,7 +541,7 @@ async function overdueMarkJob() {
 }
 
 async function eodSummaryJob() {
-  logger.info("worker.job.start", { job: "eod-summary" });
+  logger.info("worker.job.start", { job: "eod-summary", force: FORCE_RUN });
   const now = new Date();
   const allUsers = await db.select().from(users).where(eq(users.disabled, false));
 
@@ -315,20 +549,17 @@ async function eodSummaryJob() {
     if (user.notificationPrefs?.dailySummary === false) continue;
 
     const tz = user.timezone?.trim() || "UTC";
-    if (!isLocalEodWindow(now, tz)) continue;
+    if (!FORCE_RUN && !isLocalEodWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
-    const dayTasks = await db
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.assigneeId, user.id), eq(tasks.date, today)));
+    const dayTasks = await loadUserDayTasks(user.id, today);
 
     const completedTasks = dayTasks.filter((t) => t.status === "completed");
     const completed = completedTasks.length;
     const inProgress = dayTasks.filter((t) =>
       ["in_progress", "working_on_it", "review"].includes(t.status),
     ).length;
-    const pending = dayTasks.filter((t) =>
+    const pendingCount = dayTasks.filter((t) =>
       ["not_started", "waiting", "blocked"].includes(t.status),
     ).length;
     const overdue = dayTasks.filter((t) => t.isOverdue).length;
@@ -347,7 +578,7 @@ async function eodSummaryJob() {
       totalTasks: total,
       completed,
       inProgress,
-      pending,
+      pending: pendingCount,
       overdue,
       completionRate,
       remainingTaskIds: remaining.map((t) => t.id),
@@ -364,10 +595,28 @@ async function eodSummaryJob() {
       });
     }
 
+    const pendingList = remaining.length
+      ? remaining
+          .slice(0, 25)
+          .map((t, i) =>
+            formatTaskLine(
+              {
+                title: t.title,
+                dueTime: t.dueTime,
+                projectName: t.projectName,
+                daily: Boolean(t.dailyNotify || t.recurrence === "daily"),
+              },
+              i + 1,
+            ),
+          )
+          .join("\n")
+      : "None — all caught up.";
+    const morePending = remaining.length > 25 ? `\n…and ${remaining.length - 25} more` : "";
+
     const doneList = completedTasks.length
       ? completedTasks
           .slice(0, 12)
-          .map((t) => `- ${t.title}`)
+          .map((t) => `- ${t.title}${t.projectName ? ` [${t.projectName}]` : ""}`)
           .join("\n")
       : "- none completed yet";
 
@@ -375,8 +624,17 @@ async function eodSummaryJob() {
       await createNotification({
         userId: user.id,
         type: "daily_summary",
-        title: "End of day summary · 5:00 PM",
-        body: `${completed}/${total} completed (${completionRate}%). ${remaining.length} still open.`,
+        title:
+          remaining.length > 0
+            ? `Pending tasks · ${remaining.length} still open`
+            : "End of day · all caught up",
+        body:
+          remaining.length > 0
+            ? `After 5:00 PM: ${remaining.length} pending task${remaining.length !== 1 ? "s" : ""} — ${remaining
+                .slice(0, 3)
+                .map((t) => t.title)
+                .join(", ")}${remaining.length > 3 ? "…" : ""}`
+            : `${completed}/${total} completed (${completionRate}%). Nice work.`,
         link: "/dashboard",
       });
     }
@@ -385,21 +643,39 @@ async function eodSummaryJob() {
       null,
       "dailySummary",
       [
-        `EOD · ${user.name} · ${today}`,
-        `done ${completed}  ·  active ${inProgress}  ·  pending ${pending}  ·  overdue ${overdue}  ·  ${completionRate}%`,
+        `🕔 EOD · ${user.name} · ${today}`,
+        `done ${completed}  ·  active ${inProgress}  ·  pending ${pendingCount}  ·  overdue ${overdue}  ·  ${completionRate}%`,
+        "",
+        "Your pending tasks",
+        pendingList + morePending,
         "",
         "Work completed",
         doneList,
-        "",
-        "Still open",
-        remaining.length
-          ? remaining
-              .slice(0, 8)
-              .map((t) => `- ${t.title}`)
-              .join("\n")
-          : "- none",
       ].join("\n"),
     );
+
+    if (wantsEmail(user) && user.email) {
+      try {
+        const result = await sendPendingTasksEmail({
+          to: user.email,
+          name: user.name,
+          date: today,
+          pending: remaining.map(toDigestLine),
+          completedCount: completed,
+          totalCount: total,
+        });
+        if ("skipped" in result && result.skipped) {
+          logger.warn("worker.eod.email_skipped", { userId: user.id, reason: result.reason });
+        } else {
+          logger.info("worker.eod.email_sent", {
+            userId: user.id,
+            pending: remaining.length,
+          });
+        }
+      } catch (err) {
+        logger.error("worker.eod.email_failed", { userId: user.id, err });
+      }
+    }
   }
 }
 

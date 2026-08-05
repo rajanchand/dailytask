@@ -346,3 +346,159 @@ export async function sendPasswordChangedEmail(input: {
 
   await sendMail({ to: input.to, subject, text, html });
 }
+
+export type DigestTaskLine = {
+  title: string;
+  priority?: string | null;
+  projectName?: string | null;
+  status?: string | null;
+  dueTime?: string | null;
+};
+
+function taskLinesHtml(lines: DigestTaskLine[]) {
+  if (!lines.length) {
+    return `<p style="margin:0;color:${MUTED};">No tasks in this list.</p>`;
+  }
+  const rows = lines
+    .map((t, i) => {
+      const meta = [
+        t.projectName ? escapeHtml(t.projectName) : null,
+        t.priority ? escapeHtml(t.priority) : null,
+        t.dueTime ? `due ${escapeHtml(t.dueTime)}` : null,
+        t.status ? escapeHtml(t.status.replaceAll("_", " ")) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `<tr>
+        <td style="padding:10px 12px;border-bottom:1px solid ${BORDER};vertical-align:top;width:28px;color:${MUTED};">${i + 1}.</td>
+        <td style="padding:10px 12px;border-bottom:1px solid ${BORDER};">
+          <div style="font-weight:600;color:${TEXT};">${escapeHtml(t.title)}</div>
+          ${meta ? `<div style="margin-top:2px;font-size:12px;color:${MUTED};">${meta}</div>` : ""}
+        </td>
+      </tr>`;
+    })
+    .join("");
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;border:1px solid ${BORDER};border-radius:10px;overflow:hidden;">${rows}</table>`;
+}
+
+function taskLinesText(lines: DigestTaskLine[]) {
+  if (!lines.length) return "None.";
+  return lines
+    .map((t, i) => {
+      const meta = [
+        t.projectName,
+        t.priority,
+        t.dueTime ? `due ${t.dueTime}` : null,
+        t.status,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `${i + 1}. ${t.title}${meta ? ` (${meta})` : ""}`;
+    })
+    .join("\n");
+}
+
+/** Morning digest: today's project / daily tasks — please complete on time. */
+export async function sendMorningTaskEmail(input: {
+  to: string;
+  name: string;
+  date: string;
+  tasks: DigestTaskLine[];
+}) {
+  if (!mailConfigured()) return { skipped: true as const, reason: "smtp_not_configured" };
+  const loginUrl = `${getAppUrl()}/planner`;
+  const subject = `Morning tasks · ${input.date} — please complete on time`;
+  const safeName = escapeHtml(input.name);
+  const count = input.tasks.length;
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `Good morning — here are your ${count} task${count === 1 ? "" : "s"} for ${input.date}.`,
+    "Please complete them on time.",
+    "",
+    taskLinesText(input.tasks),
+    "",
+    `Open planner: ${loginUrl}`,
+    "",
+    `— ${APP_NAME}`,
+  ].join("\n");
+
+  const bodyHtml = `
+    <p style="margin:0 0 12px;font-size:16px;">Hi ${safeName},</p>
+    <p style="margin:0 0 8px;">
+      Good morning — your <strong>${count}</strong> task${count === 1 ? "" : "s"} for
+      <strong>${escapeHtml(input.date)}</strong> are ready.
+      Please complete them on time.
+    </p>
+    ${taskLinesHtml(input.tasks)}
+    ${ctaButton(loginUrl, "Open today's planner")}
+  `;
+
+  const html = emailShell({
+    preheader: `${count} tasks for ${input.date}. Please complete them on time.`,
+    title: subject,
+    bodyHtml,
+  });
+
+  await sendMail({ to: input.to, subject, text, html });
+  return { ok: true as const };
+}
+
+/** 5pm digest: pending / incomplete tasks for today. */
+export async function sendPendingTasksEmail(input: {
+  to: string;
+  name: string;
+  date: string;
+  pending: DigestTaskLine[];
+  completedCount: number;
+  totalCount: number;
+}) {
+  if (!mailConfigured()) return { skipped: true as const, reason: "smtp_not_configured" };
+  const loginUrl = `${getAppUrl()}/dashboard`;
+  const pendingCount = input.pending.length;
+  const subject =
+    pendingCount > 0
+      ? `Pending tasks · ${input.date} (${pendingCount} still open)`
+      : `End of day · ${input.date} — all caught up`;
+  const safeName = escapeHtml(input.name);
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `End of day summary for ${input.date}: ${input.completedCount}/${input.totalCount} completed.`,
+    "",
+    pendingCount
+      ? `Your pending tasks:\n${taskLinesText(input.pending)}`
+      : "You have no pending tasks — nice work.",
+    "",
+    `Open dashboard: ${loginUrl}`,
+    "",
+    `— ${APP_NAME}`,
+  ].join("\n");
+
+  const bodyHtml = `
+    <p style="margin:0 0 12px;font-size:16px;">Hi ${safeName},</p>
+    <p style="margin:0 0 8px;">
+      End of day · <strong>${escapeHtml(input.date)}</strong>:
+      <strong>${input.completedCount}</strong> of <strong>${input.totalCount}</strong> completed.
+    </p>
+    <p style="margin:16px 0 8px;font-weight:600;">
+      ${pendingCount ? `Your pending tasks (${pendingCount})` : "No pending tasks"}
+    </p>
+    ${taskLinesHtml(input.pending)}
+    ${ctaButton(loginUrl, "Open dashboard")}
+  `;
+
+  const html = emailShell({
+    preheader:
+      pendingCount > 0
+        ? `${pendingCount} pending task${pendingCount === 1 ? "" : "s"} for ${input.date}.`
+        : `All tasks complete for ${input.date}.`,
+    title: subject,
+    bodyHtml,
+  });
+
+  await sendMail({ to: input.to, subject, text, html });
+  return { ok: true as const };
+}
