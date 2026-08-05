@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Bell } from "lucide-react";
+import { ArrowLeft, Plus, Bell, Search } from "lucide-react";
 import { toast } from "sonner";
 import { TaskCard } from "@/components/tasks/task-card";
 import { TaskForm } from "@/components/tasks/task-form";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createTaskAction } from "@/server/actions/tasks";
 import { canDeleteTask, canUpdateTask } from "@/server/task-access";
-import { todayISO } from "@/lib/utils";
+import { PRIORITY_LABELS, todayISO } from "@/lib/utils";
 import type { Role } from "@/server/db/schema";
 
 type Task = {
@@ -58,10 +59,44 @@ type Props = {
   };
 };
 
+const priorityOrder: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  none: 4,
+};
+
 export function ProjectDetailClient({ project, tasks, stats, options, access }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [query, setQuery] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
+
+  const dailyCount = tasks.filter((t) => t.dailyNotify || t.recurrence === "daily").length;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return tasks
+      .filter((t) => {
+        if (priorityFilter && t.priority !== priorityFilter) return false;
+        if (!q) return true;
+        return (
+          t.title.toLowerCase().includes(q) ||
+          (t.description ?? "").toLowerCase().includes(q) ||
+          (t.assigneeName ?? "").toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const bySort = (a as Task & { sortOrder?: number }).sortOrder;
+        const ao = priorityOrder[a.priority] ?? 9;
+        const bo = priorityOrder[b.priority] ?? 9;
+        if (typeof bySort === "number") return 0;
+        if (ao !== bo) return ao - bo;
+        return a.title.localeCompare(b.title);
+      });
+  }, [tasks, query, priorityFilter]);
 
   function handleCreate(formData: FormData) {
     formData.set("projectId", project.id);
@@ -79,7 +114,7 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-3">
           <Link
             href="/projects"
@@ -100,13 +135,18 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
               )}
             </div>
           </div>
-          <div className="max-w-sm space-y-1.5">
-            <div className="flex justify-between text-sm text-muted-foreground">
-              <span>
-                {stats.completed}/{stats.total} tasks done
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              {stats.completed}/{stats.total} done · {stats.progress}%
+            </span>
+            {dailyCount > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 dark:border-teal-900 dark:bg-teal-950 dark:text-teal-200">
+                <Bell className="h-3 w-3" />
+                {dailyCount} daily notify
               </span>
-              <span>{stats.progress}%</span>
-            </div>
+            )}
+          </div>
+          <div className="max-w-md">
             <Progress value={stats.progress} />
           </div>
         </div>
@@ -127,7 +167,12 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
                 <TaskForm
                   options={options}
                   lockProjectId={project.id}
-                  defaultValues={{ date: todayISO(), projectId: project.id }}
+                  defaultValues={{
+                    date: todayISO(),
+                    projectId: project.id,
+                    dailyNotify: true,
+                    recurrence: "daily",
+                  }}
                   pending={pending}
                   submitLabel="Add to Project"
                 />
@@ -137,32 +182,52 @@ export function ProjectDetailClient({ project, tasks, stats, options, access }: 
         )}
       </div>
 
+      {tasks.length > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tasks…"
+              className="pl-9"
+            />
+          </div>
+          <select
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value)}
+            className="h-10 rounded-lg border border-border bg-card px-3 text-sm"
+            aria-label="Filter by priority"
+          >
+            <option value="">All priorities</option>
+            {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {tasks.length === 0 ? (
         <p className="py-12 text-center text-muted-foreground">
           No tasks in this project yet.
           {access.canCreate ? " Add one to get started." : ""}
         </p>
+      ) : filtered.length === 0 ? (
+        <p className="py-12 text-center text-muted-foreground">No tasks match your filters.</p>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {tasks.map((task) => (
-            <div key={task.id} className="relative">
-              {(task.dailyNotify || task.recurrence === "daily") && (
-                <span
-                  className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-                  title="Daily morning notify"
-                >
-                  <Bell className="h-3 w-3" />
-                  Daily
-                </span>
-              )}
-              <TaskCard
-                task={task}
-                options={options}
-                lockProjectId={project.id}
-                canEdit={canUpdateTask(access.role, access.userId, task)}
-                canDelete={canDeleteTask(access.role, access.userId, task)}
-              />
-            </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              options={options}
+              lockProjectId={project.id}
+              hideProject
+              canEdit={canUpdateTask(access.role, access.userId, task)}
+              canDelete={canDeleteTask(access.role, access.userId, task)}
+            />
           ))}
         </div>
       )}
