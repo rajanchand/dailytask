@@ -1,6 +1,6 @@
 "use server";
 
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/server/db";
@@ -16,13 +16,14 @@ const projectSchema = z.object({
   teamId: z.string().optional().nullable(),
 });
 
-export async function getProjects() {
+export async function getProjectById(projectId: string) {
   await requireSession();
-  return db
+  const [project] = await db
     .select()
     .from(projects)
-    .where(eq(projects.archived, false))
-    .orderBy(projects.name);
+    .where(and(eq(projects.id, projectId), eq(projects.archived, false)))
+    .limit(1);
+  return project ?? null;
 }
 
 export async function getProjectStats() {

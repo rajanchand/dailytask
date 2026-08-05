@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Worker, Queue } from "bullmq";
 import IORedis from "ioredis";
-import { and, eq, lte, ne, isNotNull } from "drizzle-orm";
+import { and, eq, lte, ne, isNotNull, or } from "drizzle-orm";
 import { format, addDays } from "date-fns";
 import { db } from "../src/server/db";
 import { tasks, users, dailySummaries, reminders, calendarEntries } from "../src/server/db/schema";
@@ -82,6 +82,85 @@ function todayISOInTimezone(timeZone: string, date = new Date()): string {
   }
 }
 
+/**
+ * Ensure daily-notify / daily-recurrence tasks show up for today's morning report:
+ * - Open tasks dated before today are rolled forward to today.
+ * - Completed daily-recurrence tasks get a fresh occurrence for today if missing.
+ */
+async function ensureDailyTasksForToday(userId: string, today: string) {
+  const dailyTasks = await db
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.assigneeId, userId),
+        ne(tasks.status, "cancelled"),
+        or(eq(tasks.dailyNotify, true), eq(tasks.recurrence, "daily")),
+      ),
+    );
+
+  for (const task of dailyTasks) {
+    if (task.date >= today) continue;
+
+    if (task.status !== "completed" && task.status !== "cancelled") {
+      await db
+        .update(tasks)
+        .set({
+          date: today,
+          isOverdue: false,
+          updatedAt: new Date(),
+          dailyNotify: true,
+        })
+        .where(eq(tasks.id, task.id));
+      continue;
+    }
+
+    // Completed daily recurrence → spawn today's occurrence if not already present.
+    if (task.recurrence !== "daily" && !task.dailyNotify) continue;
+
+    const existingToday = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.assigneeId, userId),
+          eq(tasks.date, today),
+          eq(tasks.title, task.title),
+          ne(tasks.status, "cancelled"),
+          task.projectId
+            ? eq(tasks.projectId, task.projectId)
+            : eq(tasks.createdById, task.createdById),
+        ),
+      )
+      .limit(1);
+
+    if (existingToday.length) continue;
+
+    await db.insert(tasks).values({
+      id: newId(),
+      title: task.title,
+      description: task.description,
+      notes: task.notes,
+      date: today,
+      startTime: task.startTime,
+      dueTime: task.dueTime,
+      dueAt: task.dueTime ? new Date(`${today}T${task.dueTime}:00`) : null,
+      priority: task.priority,
+      status: "not_started",
+      progress: 0,
+      assigneeId: task.assigneeId,
+      createdById: task.createdById,
+      projectId: task.projectId,
+      categoryId: task.categoryId,
+      teamId: task.teamId,
+      recurrence: task.recurrence === "none" ? "daily" : task.recurrence,
+      recurrenceRule: task.recurrenceRule,
+      dailyNotify: true,
+      sortOrder: task.sortOrder,
+    });
+  }
+}
+
 async function morningReminderJob() {
   logger.info("worker.job.start", { job: "morning-reminder" });
   const now = new Date();
@@ -94,43 +173,74 @@ async function morningReminderJob() {
     if (!isLocalMorningReportWindow(now, tz)) continue;
 
     const today = todayISOInTimezone(tz, now);
+    await ensureDailyTasksForToday(user.id, today);
+
     const dayTasks = await db
       .select()
       .from(tasks)
       .where(and(eq(tasks.assigneeId, user.id), eq(tasks.date, today)));
 
-    const open = dayTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
-    const completed = dayTasks.filter((t) => t.status === "completed");
-    const inProgress = dayTasks.filter((t) =>
+    // Also surface any remaining daily-notify tasks that somehow stayed off-date.
+    const extraDaily = await db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.assigneeId, user.id),
+          ne(tasks.status, "completed"),
+          ne(tasks.status, "cancelled"),
+          or(eq(tasks.dailyNotify, true), eq(tasks.recurrence, "daily")),
+          ne(tasks.date, today),
+        ),
+      );
+
+    const byId = new Map<string, (typeof dayTasks)[number]>();
+    for (const t of dayTasks) byId.set(t.id, t);
+    for (const t of extraDaily) byId.set(t.id, t);
+    const allRelevant = [...byId.values()];
+
+    const open = allRelevant.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+    const completed = allRelevant.filter((t) => t.status === "completed");
+    const inProgress = allRelevant.filter((t) =>
       ["in_progress", "working_on_it", "review"].includes(t.status),
     );
-    const pending = dayTasks.filter((t) =>
+    const pending = allRelevant.filter((t) =>
       ["not_started", "waiting", "blocked"].includes(t.status),
     );
-    const overdue = dayTasks.filter((t) => t.isOverdue && t.status !== "completed");
+    const overdue = allRelevant.filter((t) => t.isOverdue && t.status !== "completed");
+    const dailyFlagged = open.filter((t) => t.dailyNotify || t.recurrence === "daily");
 
     const openLines = open.length
       ? open
           .slice(0, 10)
-          .map((t, i) => `${i + 1}. ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`)
+          .map((t, i) => {
+            const daily =
+              t.dailyNotify || t.recurrence === "daily" ? " 🔁" : "";
+            return `${i + 1}. ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}${daily}`;
+          })
           .join("\n")
       : "None — clear calendar.";
     const more = open.length > 10 ? `\n…and ${open.length - 10} more` : "";
 
     const reportBody = [
       `Today · ${today}`,
-      `total ${dayTasks.length}  ·  done ${completed.length}  ·  active ${inProgress.length}  ·  pending ${pending.length}  ·  overdue ${overdue.length}`,
+      `total ${allRelevant.length}  ·  done ${completed.length}  ·  active ${inProgress.length}  ·  pending ${pending.length}  ·  overdue ${overdue.length}`,
+      dailyFlagged.length ? `daily notify ${dailyFlagged.length}` : null,
       "",
       "Your tasks",
       openLines + more,
-    ].join("\n");
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
 
     if (user.notificationPrefs?.inAppEnabled !== false) {
       await createNotification({
         userId: user.id,
         type: "morning_reminder",
         title: "Morning task report · 8:30",
-        body: `You have ${open.length} open task${open.length !== 1 ? "s" : ""} today (${completed.length} already done).`,
+        body: `You have ${open.length} open task${open.length !== 1 ? "s" : ""} today (${completed.length} already done)${
+          dailyFlagged.length ? ` · ${dailyFlagged.length} daily` : ""
+        }.`,
         link: "/planner",
       });
     }
